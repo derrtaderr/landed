@@ -127,7 +127,10 @@ export const n8n = {
     // an adapter whose read is EXPLICITLY bounded and can say so.
     const source = { complete: !truncated, empty: rows.length === 0 };
 
-    if (target.workflowId === undefined && target.executionId !== undefined) {
+    // An execution id is the most specific join there is, so it wins whenever it is present. It
+    // used to require workflowId to be ABSENT, which sent a `completed` claim carrying both ids
+    // (which is what an n8n hook naturally has) down the workflow-window branch. Ship-check F-01.
+    if (target.executionId !== undefined) {
       if (rows.length === 0) return { found: false, source };
 
       const row = rows.find((candidate) => String(candidate.id) === String(target.executionId));
