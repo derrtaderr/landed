@@ -36,7 +36,7 @@ become a different one than you typed. Write them as "--flag value", never "--fl
 
   check      --claims <file>, --out <dir>, --strict, --recheck,
              --n8n-executions <file>, --n8n-workflows <file>,
-             --double-fire-seconds <n>
+             --double-fire-seconds <n>, --enumerate claimed|all, --since <ISO>
   validate   --claims <file>
   report     --out <dir>
   demo       --out <dir>
@@ -74,6 +74,8 @@ const FLAG_SPEC = {
     '--n8n-executions': 'value',
     '--n8n-workflows': 'value',
     '--double-fire-seconds': 'value',
+    '--enumerate': 'value',
+    '--since': 'value',
   },
   validate: { '--claims': 'value' },
   report: { '--out': 'value' },
@@ -168,6 +170,16 @@ async function verbCheck(flags, { cwd, env, out }) {
   if (flags['--n8n-executions'] !== undefined) config.n8n.executionsPath = resolvePath(cwd, flags['--n8n-executions']);
   if (flags['--n8n-workflows'] !== undefined) config.n8n.workflowsPath = resolvePath(cwd, flags['--n8n-workflows']);
 
+  const enumerate = flags['--enumerate'] ?? 'claimed';
+  if (enumerate !== 'claimed' && enumerate !== 'all') {
+    throw new Refusal(`--enumerate takes claimed or all, not ${enumerate}`);
+  }
+
+  const since = flags['--since'];
+  if (since !== undefined && Number.isNaN(Date.parse(since))) {
+    throw new Refusal(`--since needs an ISO 8601 instant, not ${since}`);
+  }
+
   const { records } = parseClaims(claims.text);
   const result = await runCheck({
     records,
@@ -176,6 +188,8 @@ async function verbCheck(flags, { cwd, env, out }) {
     outDir,
     at: flags.__now,
     recheck: flags['--recheck'] === true,
+    enumerateAll: enumerate === 'all',
+    since: since ?? null,
     doubleFireSeconds,
     inputs: { claims: shortPath(cwd, claims.path) },
   });

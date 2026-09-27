@@ -115,6 +115,10 @@ export const n8n = {
   // is keyed by id and no window bounds the read.
   requiredKeys: { executed: ['workflowId'], completed: ['executionId'] },
 
+  // What a claim on this adapter is ABOUT. The core reads it off the target to scope enumeration to
+  // the workflows the claims named, and to suppress a workflow whose own claim it could not resolve.
+  subjectKey: 'workflowId',
+
   async lookup(target, deps) {
     const executions = await loadExport('executions', deps);
     if (executions.error !== undefined) return unreachable(executions.error);
@@ -195,13 +199,21 @@ export const n8n = {
     const rows = executions.rows;
     const truncated = executions.nextCursor !== null && executions.nextCursor !== undefined;
 
+    // `scope.subjects` is the list of workflow ids to enumerate, or null for all of them. Scoping
+    // here rather than in the core keeps the filter next to the field it reads.
+    const wanted = scope?.subjects === null || scope?.subjects === undefined ? null : new Set(scope.subjects.map(String));
+
     return {
       source: { complete: !truncated, empty: rows.length === 0 },
       records: rows
         .filter((row) => withinWindow(row.startedAt, scope))
+        .filter((row) => wanted === null || wanted.has(String(row.workflowId)))
         .map((row) => ({
           kind: 'execution',
           id: String(row.id),
+          // The subject, in the core's vocabulary, so it can suppress and scope without knowing
+          // what an n8n workflow is.
+          subject: String(row.workflowId ?? ''),
           workflowId: String(row.workflowId ?? ''),
           startedAt: row.startedAt ?? null,
           status: statusOf(row),

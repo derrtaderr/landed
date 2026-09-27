@@ -19,6 +19,10 @@ const outbox = {
   name: 'outbox',
   kinds: ['sent', 'created'],
   requiredKeys: { sent: ['messageId'], created: ['messageId'] },
+  // The contract's optional scoping key, added with decision D2. A mail adapter's subject is the
+  // mailbox, not the message, and declaring it is what lets the core scope enumeration to the
+  // mailboxes the claims named without knowing what a mailbox is.
+  subjectKey: 'mailbox',
   async lookup(target, deps) {
     const rows = deps.config?.outbox?.rows;
     if (rows === undefined) return { reachable: false, reason: 'no outbox export was configured' };
@@ -31,7 +35,9 @@ const outbox = {
     const rows = deps.config?.outbox?.rows ?? [];
     return {
       source: { complete: true, empty: rows.length === 0 },
-      records: rows.map((row) => ({ kind: 'execution', id: row.id, startedAt: row.at, status: row.status })),
+      records: rows
+        .filter((row) => scope?.subjects === null || scope?.subjects === undefined || scope.subjects.includes(row.mailbox))
+        .map((row) => ({ kind: 'execution', id: row.id, subject: row.mailbox, startedAt: row.at, status: row.status })),
     };
   },
 };
@@ -39,8 +45,8 @@ const outbox = {
 const WINDOW = { from: '2026-09-26T10:00:00.000Z', to: '2026-09-26T11:00:00.000Z' };
 
 const CLAIMS = [
-  { id: 'c-1', at: '2026-09-26T10:10:00.000Z', actor: 'mailer', kind: 'sent', target: { adapter: 'outbox', messageId: 'm-1', window: WINDOW } },
-  { id: 'c-2', at: '2026-09-26T10:20:00.000Z', actor: 'mailer', kind: 'sent', target: { adapter: 'outbox', messageId: 'm-missing', window: WINDOW } },
+  { id: 'c-1', at: '2026-09-26T10:10:00.000Z', actor: 'mailer', kind: 'sent', target: { adapter: 'outbox', mailbox: 'outreach', messageId: 'm-1', window: WINDOW } },
+  { id: 'c-2', at: '2026-09-26T10:20:00.000Z', actor: 'mailer', kind: 'sent', target: { adapter: 'outbox', mailbox: 'outreach', messageId: 'm-missing', window: WINDOW } },
   { id: 'c-3', at: '2026-09-26T10:30:00.000Z', actor: 'mailer', kind: 'sent', target: { adapter: 'outbox' } },
 ]
   .map((claim) => JSON.stringify(claim))
@@ -51,7 +57,7 @@ test('a brand new adapter satisfies the contract without touching the core', () 
 });
 
 test('its receipts are all contract shapes', async () => {
-  const withRows = { config: { outbox: { rows: [{ id: 'm-1', at: '2026-09-26T10:10:00.000Z', status: 'sent' }] } } };
+  const withRows = { config: { outbox: { rows: [{ id: 'm-1', mailbox: 'outreach', at: '2026-09-26T10:10:00.000Z', status: 'sent' }] } } };
   assert.equal(describeReceipt(await outbox.lookup({ messageId: 'm-1' }, withRows)), 'found');
   assert.equal(describeReceipt(await outbox.lookup({ messageId: 'nope' }, withRows)), 'absent');
   assert.equal(describeReceipt(await outbox.lookup({ messageId: 'm-1' }, { config: {} })), 'unreachable');
@@ -66,8 +72,8 @@ test('the real core resolves three states and both verdicts for it, with no core
       config: {
         outbox: {
           rows: [
-            { id: 'm-1', at: '2026-09-26T10:10:00.000Z', status: 'sent' },
-            { id: 'm-unclaimed', at: '2026-09-26T10:45:00.000Z', status: 'sent' },
+            { id: 'm-1', mailbox: 'outreach', at: '2026-09-26T10:10:00.000Z', status: 'sent' },
+            { id: 'm-unclaimed', mailbox: 'outreach', at: '2026-09-26T10:45:00.000Z', status: 'sent' },
           ],
         },
       },
@@ -78,4 +84,5 @@ test('the real core resolves three states and both verdicts for it, with no core
   assert.equal(outcome.summary.orphaned_claims, 1, 'm-missing is an orphaned claim');
   assert.equal(outcome.summary.unresolved, 1, 'the claim with no join key is unresolved');
   assert.equal(outcome.summary.executed_never_claimed, 1, 'm-unclaimed was never claimed');
+  assert.equal(outcome.summary.unclaimed, 1, 'and it is its own row class, not a contradiction');
 });
