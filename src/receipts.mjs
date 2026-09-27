@@ -42,8 +42,20 @@ export function writeReceipt(outDir, receipt) {
     path = join(dir, receiptFilename(receipt.at, suffix));
   }
 
+  let body;
   try {
-    writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`);
+    body = `${JSON.stringify(receipt, null, 2)}\n`;
+  } catch (error) {
+    // A receipt for a very large claims file can exceed V8's maximum string length, and "Invalid
+    // string length" is not something an operator can act on. The remedy is to reconcile fewer
+    // claims per run, so the refusal names the flag that does it.
+    throw new ReceiptWriteError(
+      `cannot serialise the receipt for ${path}: ${error.message}. This run joined too many claims to write in one receipt; bound it with --since <ISO>, or split the claims file.`,
+    );
+  }
+
+  try {
+    writeFileSync(path, body);
   } catch (error) {
     throw new ReceiptWriteError(`cannot write ${path}: ${error.code ?? error.message}`);
   }
