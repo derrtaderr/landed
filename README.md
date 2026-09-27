@@ -255,7 +255,7 @@ read, which keeps an append-only file from growing the work of every run forever
 | `0` | The run ran, every claim resolved, and nothing disagreed |
 | `1` | Findings: something is contradicted |
 | `2` | A refusal: no claims file, nothing in it, an unwritable `--out`, or a flag that makes no sense |
-| `3` | Nothing resolved: every claim came back `unresolved`, so the authoritative side was not read |
+| `3` | Nothing resolved: every claim this run actually read came back `unresolved`, so the authoritative side was not read. Rows carried from an earlier run do not count as read |
 
 **Pass `--strict` from cron.** It promotes ANY unresolved claim to exit 3, not just a run where
 everything was unresolved. A lost credential must never share an exit code with a quiet healthy

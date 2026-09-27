@@ -164,7 +164,7 @@ path or its `gh` credential exited 0, and that the cron recipe the tool printed 
 | `0` | The run ran, every claim resolved, and nothing disagreed |
 | `1` | Findings: something is contradicted |
 | `2` | A refusal: no claims file, nothing in it, an unwritable `--out`, a flag that makes no sense |
-| `3` | Nothing resolved: every claim came back `unresolved` |
+| `3` | Nothing resolved: every claim this run actually READ came back `unresolved`; carried rows do not count as read (gate-time correction N-5, 2026-09-27) |
 
 `--strict` promotes ANY unresolved claim to exit 3, and the `watch` recipe passes it in both the
 cron and the launchd form. A lost credential must never share an exit code with a quiet healthy hour.
@@ -239,7 +239,9 @@ nothing stands between them on a schedule.
 2. **`orphaned-claim` carries state `contradicted`, not a fourth state.** The dispatch names
    three states and two verdicts. An absence in a complete, non-empty source is two records
    disagreeing, so it belongs under `contradicted` with the verdict naming which way it
-   disagreed. `executed-never-claimed` is `contradicted` for the same reason.
+   disagreed. ~~`executed-never-claimed` is `contradicted` for the same reason.~~ RETIRED by
+   decision D2 (§6): an unclaimed run is its own row class and section, not a contradiction of
+   any claim, and it is excluded from exit 1. Kept struck through so the lineage reads.
 3. **The privacy guard refuses non-allowlisted emails everywhere, not only outside `fixtures/`,**
    and adds home-path detection. Stricter than asked, same cost.
 4. **Clock skew is a property of the CLAIM, not of the source's record extents.** Found by the
@@ -253,7 +255,9 @@ nothing stands between them on a schedule.
    a claim whose `at` falls outside the window it reports on, beyond a one-minute lag tolerance,
    because a claim is written after the work it describes. `source.window` stays in the contract for
    an adapter whose read IS explicitly bounded, and the false-green table still covers it.
-5. **A run that resolved nothing prints a warning, and still exits 0 without `--strict`.** The
+5. ~~**A run that resolved nothing prints a warning, and still exits 0 without `--strict`.**~~
+   RETIRED by decision D1 (§6, §8): such a run exits 3. The paragraph below is the wave-1 reasoning,
+   kept for lineage; the contract is §8. The
    dispatch ties the non-zero exit to `--strict`, so the exit code is unchanged. But a check that
    lost its credential and a check with nothing to report must not look identical, so the output
    says which. See §7.
