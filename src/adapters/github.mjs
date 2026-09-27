@@ -111,7 +111,14 @@ async function lookupPr(target, deps) {
   }
   if (outcome.kind !== 'ok') return fromOutcome(outcome);
 
-  const state = json.merged === true || json.merged_at !== null ? 'MERGED' : String(json.state ?? '').toUpperCase();
+  // A body GitHub does not send (no merged_at key, or no state either) is unreadable, not a
+  // match. Absence of a field can never be the evidence a merge happened (ship-check N-1).
+  const mergedAt = typeof json.merged_at === 'string' && json.merged_at.length > 0 ? json.merged_at : null;
+  const stateField = typeof json.state === 'string' ? json.state.toUpperCase() : '';
+  if (json.merged !== true && mergedAt === null && stateField === '') {
+    return { reachable: false, reason: 'PULL_BODY_MALFORMED: the pulls body carried neither merged_at nor state' };
+  }
+  const state = json.merged === true || mergedAt !== null ? 'MERGED' : stateField;
 
   return {
     found: true,
