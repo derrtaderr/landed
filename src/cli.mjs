@@ -52,7 +52,7 @@ reads:
   0  the run ran, every claim resolved, and nothing disagreed
   1  findings: something is contradicted
   2  a refusal: no claims file, nothing in it, an unwritable --out, or a flag that makes no sense
-  3  nothing resolved: every claim came back unresolved, so the authoritative side was not read
+  3  nothing resolved: every claim this run actually read came back unresolved (carried rows do not count)
 
   --strict promotes ANY unresolved claim to exit 3, not just a run where everything was
   unresolved. Use it from cron. A lost credential must never share an exit code with a quiet
@@ -163,7 +163,12 @@ export function exitFor(outcome, strict) {
   const unresolved = claims.filter((result) => result.state === 'unresolved').length;
   const contradicted = claims.filter((result) => result.state === 'contradicted').length;
 
-  if (claims.length > 0 && unresolved === claims.length) return 3;
+  // "Nothing resolved" is judged over the rows this run actually READ. Carried matches were read
+  // on an earlier run; a run that read nothing new and hit an unreachable adapter must still be 3,
+  // or this protection fires only on the first run in default mode (ship-check N-5).
+  const fresh = claims.filter((result) => result.carried !== true);
+  const freshUnresolved = fresh.filter((result) => result.state === 'unresolved').length;
+  if (fresh.length > 0 && freshUnresolved === fresh.length) return 3;
   if (strict && unresolved > 0) return 3;
   if (contradicted > 0) return 1;
   return 0;
