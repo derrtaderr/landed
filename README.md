@@ -189,12 +189,20 @@ anything, which is what you want at 9am when the run happened at 3am.
 
 | Code | Meaning |
 |---|---|
-| `0` | The run completed and nothing disagreed |
-| `1` | Findings: something is contradicted, or `--strict` and something is unresolved |
-| `2` | A refusal: no claims file, no claims in it, or nothing to report |
+| `0` | The run ran, every claim resolved, and nothing disagreed |
+| `1` | Findings: something is contradicted |
+| `2` | A refusal: no claims file, nothing in it, an unwritable `--out`, or a flag that makes no sense |
+| `3` | Nothing resolved: every claim came back `unresolved`, so the authoritative side was not read |
 
-A run whose every claim is `unresolved` is not a green run. Under `--strict` it exits non-zero,
-because a check that could not read the authoritative side has not checked anything.
+**Pass `--strict` from cron.** It promotes ANY unresolved claim to exit 3, not just a run where
+everything was unresolved. A lost credential must never share an exit code with a quiet healthy
+hour, and the exit code is the only thing cron reads.
+
+Unclaimed runs are reported in their own section and do not set the exit code, because nobody
+claimed them and so no claim is wrong.
+
+`demo` always exits 0. Its corpus contains contradictions on purpose, so a non-zero demo would
+read as a broken install rather than as a working one.
 
 ### Receipts, and what a second run does
 
@@ -270,7 +278,7 @@ landed watch
 
   crontab -e, hourly, on the hour:
 
-    0 * * * * cd /path/to/your/claims && /usr/local/bin/node /path/to/landed/bin/landed.mjs check --claims claims.jsonl --out landed --n8n-executions exports/executions.json --n8n-workflows exports/workflows.json >> landed/check.log 2>&1
+    0 * * * * cd /path/to/your/claims && /usr/local/bin/node /path/to/landed/bin/landed.mjs check --strict --claims claims.jsonl --out landed --n8n-executions exports/executions.json --n8n-workflows exports/workflows.json >> landed/check.log 2>&1
 
   launchd (macOS), the same thing, in ~/Library/LaunchAgents/ai.landed.check.plist:
 
@@ -280,7 +288,8 @@ landed watch
       <key>ProgramArguments</key><array>
         <string>/usr/local/bin/node</string>
         <string>/path/to/landed/bin/landed.mjs</string>
-        <string>check</string><string>--claims</string><string>/path/to/claims.jsonl</string>
+        <string>check</string><string>--strict</string>
+        <string>--claims</string><string>/path/to/claims.jsonl</string>
         <string>--out</string><string>/path/to/landed</string>
       </array>
       <key>StartCalendarInterval</key><dict><key>Minute</key><integer>0</integer></dict>
@@ -290,9 +299,10 @@ landed watch
 
     launchctl load ~/Library/LaunchAgents/ai.landed.check.plist
 
-  Exit 1 means something disagreed, which is what makes either one alert. Pipe the output
-  wherever your team reads alarms; a finding nobody sees is the state this tool was built to
-  end.
+  Both recipes pass --strict on purpose. Exit 1 means something disagreed and exit 3 means
+  nothing could be read at all, which is the case that used to exit 0 and look like a quiet
+  hour. Pipe the output wherever your team reads alarms; a finding nobody sees is the state this
+  tool was built to end.
 ```
 
 ## What it will not do

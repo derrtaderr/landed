@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
 
 import { adapters } from './adapters/index.mjs';
+import { ReceiptWriteError } from './receipts.mjs';
 import { parseClaims, validationReport } from './claims.mjs';
 import { DEFAULT_DOUBLE_FIRE_SECONDS } from './reconcile.mjs';
 import { runCheck } from './run.mjs';
@@ -40,11 +41,19 @@ become a different one than you typed. Write them as "--flag value", never "--fl
   report     --out <dir>
   demo       --out <dir>
 
-Exit codes, because this is built to run from cron:
+Exit codes, because this is built to run from cron and the exit code is the only thing cron
+reads:
 
-  0  the run completed and nothing disagreed
-  1  findings: something is contradicted, or --strict and something is unresolved
-  2  a refusal: no claims file, no claims in it, or nothing to report
+  0  the run ran, every claim resolved, and nothing disagreed
+  1  findings: something is contradicted
+  2  a refusal: no claims file, nothing in it, an unwritable --out, or a flag that makes no sense
+  3  nothing resolved: every claim came back unresolved, so the authoritative side was not read
+
+  --strict promotes ANY unresolved claim to exit 3, not just a run where everything was
+  unresolved. Use it from cron. A lost credential must never share an exit code with a quiet
+  healthy hour.
+
+  Unclaimed runs are reported in their own section and do not set the exit code.
 
 There is no install step, so the invocation is spelled out in full. A bare landed is not on
 PATH in a fresh clone.
@@ -74,6 +83,8 @@ const FLAG_SPEC = {
 
 class Refusal extends Error {}
 
+class HelpRequested extends Error {}
+
 function parseFlags(verb, argv) {
   const spec = FLAG_SPEC[verb];
   const flags = {};
@@ -81,10 +92,16 @@ function parseFlags(verb, argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
 
+    if (token === '--help' || token === '-h') throw new HelpRequested();
+
     if (token.includes('=')) {
       throw new Refusal(`flags are written apart from their values: write "${token.split('=')[0]} ${token.split('=').slice(1).join('=')}", not "${token}"`);
     }
     if (spec[token] === undefined) throw new Refusal(`unknown flag: ${token}`);
+
+    // A flag given twice used to keep the last value silently, which is exactly the "an invocation
+    // quietly becomes a different one than you typed" that the usage text promises against.
+    if (flags[token] !== undefined) throw new Refusal(`${token} given twice; one value per flag`);
 
     if (spec[token] === 'boolean') {
       flags[token] = true;
@@ -121,9 +138,18 @@ function shortPath(cwd, path) {
   return short.startsWith('..') ? path : short;
 }
 
-function exitFor(outcome, strict) {
-  if (outcome.summary.contradicted > 0) return 1;
-  if (strict && !outcome.strict_ok) return 1;
+// The contract, in one place. SPEC §3C.1.
+//
+// Only rows that answer a CLAIM count. An unclaimed run is reported in its own section and is
+// deliberately not an exit code, because nobody claimed it and so no claim is wrong.
+export function exitFor(outcome, strict) {
+  const claims = outcome.results.filter((result) => result.claim_id !== null);
+  const unresolved = claims.filter((result) => result.state === 'unresolved').length;
+  const contradicted = claims.filter((result) => result.state === 'contradicted').length;
+
+  if (claims.length > 0 && unresolved === claims.length) return 3;
+  if (strict && unresolved > 0) return 3;
+  if (contradicted > 0) return 1;
   return 0;
 }
 
@@ -158,8 +184,9 @@ async function verbCheck(flags, { cwd, env, out }) {
     throw new Refusal(`${result.outcome.refusal.reason}: ${result.outcome.refusal.detail}`);
   }
 
-  out(renderReceipt(result.receipt, { receiptPath: shortPath(cwd, result.path) }));
-  return exitFor(result.outcome, flags['--strict'] === true);
+  const strict = flags['--strict'] === true;
+  out(renderReceipt(result.receipt, { receiptPath: shortPath(cwd, result.path), strict }));
+  return exitFor(result.outcome, strict);
 }
 
 function verbValidate(flags, { cwd, out }) {
@@ -177,15 +204,17 @@ function verbReport(flags, { cwd, out }) {
     throw new Refusal(`no receipt in ${shortPath(cwd, receiptsDir(outDir))}; run check or demo first`);
   }
 
-  out(renderReceipt(receipt, { receiptPath: shortPath(cwd, join(receiptsDir(outDir), receiptFilename(receipt.at))) }));
-  return receipt.summary.contradicted > 0 ? 0 : 0;
+  // `report` re-renders a stored receipt. It reports; it does not re-decide, so it does not carry
+  // the check's exit code. 0 when it rendered something, 2 when there was nothing to render.
+  out(renderReceipt(receipt, { receiptPath: shortPath(cwd, receipt.path ?? join(receiptsDir(outDir), receiptFilename(receipt.at))), mode: 'report' }));
+  return 0;
 }
 
 async function verbDemo(flags, { cwd, out }) {
   const outDir = outDirOf(flags, cwd);
   const result = await runDemo({ outDir });
 
-  out(renderReceipt(result.receipt, { receiptPath: shortPath(cwd, result.path) }));
+  out(renderReceipt(result.receipt, { receiptPath: shortPath(cwd, result.path), mode: 'demo' }));
   // The demo's corpus contains contradictions on purpose, so its exit code says "the demo ran",
   // not "your systems agree". A non-zero demo would read as a broken install.
   return 0;
@@ -200,7 +229,7 @@ function verbWatch(_flags, { out }) {
 
   crontab -e, hourly, on the hour:
 
-    0 * * * * cd /path/to/your/claims && /usr/local/bin/node /path/to/landed/bin/landed.mjs check --claims claims.jsonl --out landed --n8n-executions exports/executions.json --n8n-workflows exports/workflows.json >> landed/check.log 2>&1
+    0 * * * * cd /path/to/your/claims && /usr/local/bin/node /path/to/landed/bin/landed.mjs check --strict --claims claims.jsonl --out landed --n8n-executions exports/executions.json --n8n-workflows exports/workflows.json >> landed/check.log 2>&1
 
   launchd (macOS), the same thing, in ~/Library/LaunchAgents/ai.landed.check.plist:
 
@@ -210,7 +239,8 @@ function verbWatch(_flags, { out }) {
       <key>ProgramArguments</key><array>
         <string>/usr/local/bin/node</string>
         <string>/path/to/landed/bin/landed.mjs</string>
-        <string>check</string><string>--claims</string><string>/path/to/claims.jsonl</string>
+        <string>check</string><string>--strict</string>
+        <string>--claims</string><string>/path/to/claims.jsonl</string>
         <string>--out</string><string>/path/to/landed</string>
       </array>
       <key>StartCalendarInterval</key><dict><key>Minute</key><integer>0</integer></dict>
@@ -220,9 +250,10 @@ function verbWatch(_flags, { out }) {
 
     launchctl load ~/Library/LaunchAgents/ai.landed.check.plist
 
-  Exit 1 means something disagreed, which is what makes either one alert. Pipe the output
-  wherever your team reads alarms; a finding nobody sees is the state this tool was built to
-  end.`);
+  Both recipes pass --strict on purpose. Exit 1 means something disagreed and exit 3 means
+  nothing could be read at all, which is the case that used to exit 0 and look like a quiet
+  hour. Pipe the output wherever your team reads alarms; a finding nobody sees is the state this
+  tool was built to end.`);
   return 0;
 }
 
@@ -251,7 +282,13 @@ export async function main({ argv, out = console.log, err = console.error, cwd =
     if (verb === 'demo') return await verbDemo(flags, { cwd, out });
     return verbWatch(flags, { out });
   } catch (error) {
-    if (error instanceof Refusal) {
+    if (error instanceof HelpRequested) {
+      out(USAGE);
+      return 0;
+    }
+    // A write that cannot happen is a refusal, not a finding. An uncaught stack trace exits 1,
+    // which is the code for "something disagreed", and reads as an alarm about the wrong thing.
+    if (error instanceof Refusal || error instanceof ReceiptWriteError) {
       err(error.message);
       return 2;
     }

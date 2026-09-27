@@ -151,17 +151,16 @@ test('a run where everything matched exits 0', async () => {
   });
 });
 
-test('--strict turns an unresolved claim into a non-zero exit', async () => {
+test('a run whose every claim is unresolved is exit 3, with or without --strict', async () => {
+  // Rewritten for the exit-code contract decided after ship-check F-07. The whole surface lives in
+  // test/exit-codes.test.mjs; this one keeps the CLI-level case that used to assert exit 0.
   await inTempDir(async (dir) => {
     const path = join(dir, 'claims.jsonl');
     // No export configured, so the adapter is unreachable and the claim is unresolved.
     writeFileSync(path, `${JSON.stringify({ id: 'c-1', at: '2026-09-26T10:30:00.000Z', actor: 'cron', kind: 'completed', target: { adapter: 'n8n', executionId: 'e-1002' } })}\n`);
 
-    const loose = await run(['check', '--claims', path, '--out', dir]);
-    assert.equal(loose.code, 0, 'without --strict an unresolved claim is reported, not fatal');
-
-    const strict = await run(['check', '--claims', path, '--out', join(dir, 'strict'), '--strict']);
-    assert.notEqual(strict.code, 0);
+    assert.equal((await run(['check', '--claims', path, '--out', dir])).code, 3);
+    assert.equal((await run(['check', '--claims', path, '--out', join(dir, 'strict'), '--strict'])).code, 3);
   });
 });
 
@@ -224,16 +223,20 @@ test('demo writes nothing outside its --out directory', async () => {
   });
 });
 
-test('demo is deterministic, so the same run produces the same receipt twice', async () => {
+test('demo is deterministic: the same output twice, and the first receipt is never rewritten', async () => {
   await inTempDir(async (dir) => {
     const first = await run(['demo', '--out', dir]);
-    const receiptPath = join(dir, 'receipts', readdirSync(join(dir, 'receipts'))[0]);
-    const firstReceipt = readFileSync(receiptPath, 'utf8');
+    const firstName = readdirSync(join(dir, 'receipts')).sort()[0];
+    const firstReceipt = readFileSync(join(dir, 'receipts', firstName), 'utf8');
 
     const second = await run(['demo', '--out', dir]);
 
-    assert.equal(second.out, first.out);
-    assert.equal(readFileSync(receiptPath, 'utf8'), firstReceipt);
+    // The rendered output is identical, because the demo always re-checks and its clock is fixed.
+    assert.equal(second.out.replace(/receipt +\S+/, ''), first.out.replace(/receipt +\S+/, ''));
+    // And the first receipt is byte-identical, because a second run in the same instant gets its
+    // own suffixed file rather than overwriting one (m-5).
+    assert.equal(readFileSync(join(dir, 'receipts', firstName), 'utf8'), firstReceipt);
+    assert.equal(readdirSync(join(dir, 'receipts')).length, 2);
   });
 });
 
