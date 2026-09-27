@@ -78,7 +78,7 @@ landed 2026-09-26T11:00:00.000Z
   c-10        unresolved    -       MALFORMED_CLAIM
       line 10: kind is not one of sent, created, updated, merged, pushed, executed, completed: "delivered"
   c-11        unresolved    gmail   UNKNOWN_ADAPTER
-      no adapter named gmail is registered
+      no adapter named gmail is registered; the registered ones are n8n, github
   (unclaimed) unresolved    n8n     ENUMERATION_SUPPRESSED
       n8n did not enumerate wf-208, because the claim about it could not be resolved; its runs cannot be attributed either way
   c-1         matched       n8n     FIRED_AS_CLAIMED
@@ -175,11 +175,13 @@ than dropped:
 $ node bin/landed.mjs validate --claims fixtures/claims.jsonl
 landed validate fixtures/claims.jsonl
 
-  12 claims well formed
-  1 claim refused
+  11 claims well formed
+  2 claims refused
 
   line 10   c-10      MALFORMED_CLAIM
       line 10: kind is not one of sent, created, updated, merged, pushed, executed, completed: "delivered"
+  line 11   c-11      UNKNOWN_ADAPTER
+      line 11: no adapter named gmail is registered; the registered ones are n8n, github
 
   A refused claim is never dropped. It resolves to unresolved, with this reason.
 ```

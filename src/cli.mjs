@@ -13,7 +13,8 @@ import { join, relative, isAbsolute } from 'node:path';
 
 import { adapters } from './adapters/index.mjs';
 import { ReceiptWriteError } from './receipts.mjs';
-import { parseClaims, validationReport } from './claims.mjs';
+import { parseClaims } from './claims.mjs';
+import { validationReport } from './static-checks.mjs';
 import { DEFAULT_DOUBLE_FIRE_SECONDS } from './reconcile.mjs';
 import { runCheck } from './run.mjs';
 import { latestReceipt, receiptFilename, receiptsDir } from './receipts.mjs';
@@ -205,7 +206,8 @@ async function verbCheck(flags, { cwd, env, out }) {
 
 function verbValidate(flags, { cwd, out }) {
   const claims = readClaims(flags, cwd);
-  const report = validationReport(claims.text);
+  // The same static checks `check` runs, so the two surfaces cannot disagree (F-08).
+  const report = validationReport(claims.text, adapters);
 
   out(renderValidation(report, { path: shortPath(cwd, claims.path) }));
   return report.problems.length === 0 ? 0 : 1;
