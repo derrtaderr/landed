@@ -92,7 +92,7 @@ landed 2026-09-26T11:00:00.000Z
       n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
 
   notes on this run (1)
-  (unclaimed) unresolved    n8n     ENUMERATION_SUPPRESSED
+  (note)      unresolved    n8n     ENUMERATION_SUPPRESSED
       n8n did not enumerate wf-208, because the claim about it could not be resolved; its runs cannot be attributed either way
 
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json

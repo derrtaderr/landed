@@ -79,11 +79,12 @@ test('an unclaimed row renders without a claim id rather than with an empty colu
     at: '2026-09-26T11:00:00.000Z',
     summary: summary({ total: 1, claims: 0, unclaimed: 1, matched: 0, contradicted: 1, executed_never_claimed: 1, new_findings: 1 }),
     results: [
-      { claim_id: null, line: null, adapter: 'n8n', state: 'contradicted', verdict: 'executed-never-claimed', reasons: ['EXECUTED_NEVER_CLAIMED'], detail: 'n8n ran e-9', carried: false },
+      // state 'unclaimed' since D2: an unclaimed run contradicts no claim.
+      { claim_id: null, line: null, adapter: 'n8n', state: 'unclaimed', verdict: 'executed-never-claimed', reasons: ['EXECUTED_NEVER_CLAIMED'], detail: 'n8n ran e-9', carried: false },
     ],
   };
 
-  assert.match(renderReceipt(receipt, {}), /\(unclaimed\)\s+contradicted\s+n8n\s+EXECUTED_NEVER_CLAIMED \[executed-never-claimed\]/);
+  assert.match(renderReceipt(receipt, {}), /\(unclaimed\)\s+unclaimed\s+n8n\s+EXECUTED_NEVER_CLAIMED \[executed-never-claimed\]/);
 });
 
 test('contradictions are rendered before unresolved, and matches last', () => {
@@ -328,4 +329,17 @@ test('the notes are rendered under their own heading, apart from the claims', as
 
 test('the notes heading is absent when there are none', () => {
   assert.ok(!/notes on this run/i.test(renderReceipt(receiptOf([row({})]), {})));
+});
+
+test('a note row is labelled as a note, not as an unclaimed run', () => {
+  // The two row classes share "no claim id" and nothing else, and reusing one label for both is how
+  // a reader concludes the tool found a run it never mentioned.
+  const receipt = receiptOf([row({ claim_id: null, state: 'unresolved', reasons: ['ENUMERATION_SUPPRESSED'], detail: 'did not enumerate wf-9', receipt: null })]);
+  receipt.summary.claims = 0;
+  receipt.summary.notes = 1;
+  receipt.summary.unresolved = 0;
+
+  const text = renderReceipt(receipt, {});
+  assert.match(text, /\(note\)/);
+  assert.ok(!text.includes('(unclaimed)'));
 });

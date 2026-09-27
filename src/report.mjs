@@ -127,7 +127,10 @@ export function renderReceipt(receipt, { receiptPath = null, strict = false, mod
 }
 
 function rowLines(row) {
-  const id = row.claim_id ?? '(unclaimed)';
+  // Three row classes, three labels. An unclaimed RUN and a note about the run share only "no claim
+  // id", and reusing one label for both is how a reader concludes the tool found a run it never
+  // mentioned.
+  const id = row.claim_id ?? (row.state === 'unclaimed' ? '(unclaimed)' : '(note)');
   const flag = row.carried === true ? ' carried' : '';
   // The named verdict is printed beside the reason, because "orphaned-claim" and
   // "executed-never-claimed" are the two findings an operator hunts for by name.
