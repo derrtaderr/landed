@@ -100,11 +100,45 @@ function expectedFires(cadence, window) {
   return null;
 }
 
+// Which receipt shapes can answer which claim kind. A receipt of any other shape cannot grade the
+// claim at all, and the core says so rather than reaching for whatever field happens to be there.
+//
+// This table is the fix for ship-check F-01. The old code dispatched on the RECEIPT's shape before
+// it looked at the claim, so a `completed` claim that arrived with a `fires` receipt was graded as
+// a fire and its execution's `error` status was never read.
+export const RECEIPT_SHAPES_BY_KIND = {
+  merged: ['pull_request'],
+  created: ['pull_request', 'branch', 'commit', 'message', 'record'],
+  updated: ['pull_request', 'branch', 'commit', 'message', 'record'],
+  pushed: ['branch', 'commit'],
+  sent: ['message'],
+  completed: ['execution'],
+  executed: ['fires', 'execution'],
+};
+
+// n8n's execution statuses, split by what they let a `completed` claim conclude.
+const UNFINISHED_STATUSES = new Set(['running', 'waiting', 'new']);
+const SUCCEEDED_STATUSES = new Set(['success', 'warning']);
+const FAILED_STATUSES = new Set(['error', 'crashed', 'canceled', 'cancelled', 'failed']);
+
 // What the claim ASSERTS, against the facts of a record that does exist. `found: true` only
 // says the authoritative system holds a record; whether that record agrees with the claim is
 // this function's question and nothing else's.
+//
+// The claim's kind decides, always. The receipt only supplies facts.
 function interpret(base, claim, facts, doubleFireSeconds) {
-  if (facts?.kind === 'fires') return checkFires(base, claim, facts, doubleFireSeconds);
+  const allowed = RECEIPT_SHAPES_BY_KIND[claim.kind] ?? [];
+  const shape = facts?.kind ?? 'record';
+
+  if (!allowed.includes(shape)) {
+    return unresolved(
+      base,
+      'RECEIPT_SHAPE_MISMATCH',
+      `a ${claim.kind} claim cannot be graded against a ${shape} record; ${claim.kind} needs one of ${allowed.join(', ') || 'a shape no adapter offers yet'}`,
+    );
+  }
+
+  if (claim.kind === 'executed' && shape === 'fires') return checkFires(base, claim, facts, doubleFireSeconds);
 
   if (claim.kind === 'merged') {
     if (facts?.state === 'MERGED') {
@@ -135,13 +169,31 @@ function interpret(base, claim, facts, doubleFireSeconds) {
   }
 
   if (claim.kind === 'completed') {
-    if (facts?.status !== undefined && facts.status !== 'success') {
-      return contradicted(base, 'CLAIMED_COMPLETED_BUT_FAILED', `execution ${facts.id} has status ${facts.status}`);
+    const status = facts.status;
+
+    if (UNFINISHED_STATUSES.has(status)) {
+      // Not a failure and not a success. The claim may yet come true, and saying "failed" here was
+      // a reason code that disagreed with the fact beside it.
+      return unresolved(base, 'STILL_RUNNING', `execution ${facts.id} has status ${status}; it has not finished, so the claim is neither kept nor broken yet`);
     }
-    return matched(base, 'COMPLETED', `execution ${facts.id} finished with status ${facts.status ?? 'success'}`);
+    if (FAILED_STATUSES.has(status)) {
+      return contradicted(base, 'CLAIMED_COMPLETED_BUT_FAILED', `execution ${facts.id} has status ${status}`);
+    }
+    if (SUCCEEDED_STATUSES.has(status)) {
+      return matched(base, 'COMPLETED', `execution ${facts.id} finished with status ${status}`);
+    }
+    return unresolved(
+      base,
+      'EXECUTION_STATUS_UNKNOWN',
+      `execution ${facts.id} reports status ${JSON.stringify(status)}, which this version does not know how to read`,
+    );
   }
 
-  return matched(base, 'RECORD_EXISTS', `the authoritative system has a ${facts?.kind ?? 'record'} for this target`);
+  if (claim.kind === 'executed') {
+    return matched(base, 'EXECUTED', `execution ${facts.id} exists, with status ${facts.status ?? 'unreported'}`);
+  }
+
+  return matched(base, 'RECORD_EXISTS', `the authoritative system has a ${shape} for this target`);
 }
 
 // A join key is either a name the target must carry, or a nested array meaning "at least one
