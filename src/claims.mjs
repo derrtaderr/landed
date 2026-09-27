@@ -4,6 +4,8 @@
 // job is to decide whether the line is well enough formed for the core to look the target up.
 // A line that is not gets a reason naming the field, and is carried forward as a record rather
 // than dropped, because a claim quietly thrown away is the failure this tool exists to catch.
+//
+// docs/SPEC.md §3A is the schema.
 
 export const CLAIM_KINDS = ['sent', 'created', 'updated', 'merged', 'pushed', 'executed', 'completed'];
 
@@ -16,11 +18,11 @@ function isIsoInstant(value) {
 }
 
 function problemsFor(parsed) {
-  const problems = [];
-
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return ['a claim is a JSON object'];
   }
+
+  const problems = [];
 
   for (const field of REQUIRED_FIELDS) {
     if (parsed[field] === undefined) problems.push(`missing required field: ${field}`);
@@ -37,7 +39,7 @@ function problemsFor(parsed) {
   if (parsed.target !== undefined) {
     const target = parsed.target;
     if (target === null || typeof target !== 'object' || Array.isArray(target)) {
-      problems.push('target is a JSON object');
+      problems.push('target is a JSON object naming an adapter');
     } else if (typeof target.adapter !== 'string' || target.adapter === '') {
       problems.push('target.adapter names the adapter that can answer for this claim');
     }
@@ -47,12 +49,13 @@ function problemsFor(parsed) {
 }
 
 // Parses a JSONL claims file into ORDERED records. Each record is either valid, carrying the
-// claim, or invalid, carrying the reason. Blank lines are not records at all; a file of
-// nothing but blank lines produces no records, which is what the EMPTY_CLAIMS refusal reads.
+// claim, or invalid, carrying the reason. Blank lines are not records at all, and the line
+// number is the real file line so an operator can go straight to it. A file of nothing but
+// blank lines produces no records, which is what the EMPTY_CLAIMS refusal reads.
 export function parseClaims(text) {
   const records = [];
   const lines = String(text ?? '').split('\n');
-  const seen = new Map();
+  const firstSeenAt = new Map();
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
@@ -87,18 +90,21 @@ export function parseClaims(text) {
       continue;
     }
 
-    const previous = seen.get(id);
-    if (previous !== undefined && previous !== raw) {
+    // A repeated id is fine when the line is byte-identical, because an append-only claims
+    // file gets replayed. The same id carrying DIFFERENT content is two claims wearing one
+    // name, and picking either one silently is how a reconciler starts lying.
+    const previous = firstSeenAt.get(id);
+    if (previous !== undefined && previous.raw !== raw) {
       records.push({
         line,
         id,
         valid: false,
         reason: 'DUPLICATE_CLAIM_ID',
-        detail: `line ${line}: id ${id} was already claimed on line ${records.findIndex((r) => r.id === id) + 1} with different content`,
+        detail: `line ${line}: id ${id} was already claimed on line ${previous.line} with different content`,
       });
       continue;
     }
-    seen.set(id, raw);
+    if (previous === undefined) firstSeenAt.set(id, { line, raw });
 
     records.push({ line, id, valid: true, claim: parsed });
   }
@@ -112,6 +118,8 @@ export function validationReport(text) {
   return {
     total: records.length,
     valid: records.filter((record) => record.valid).length,
-    problems: records.filter((record) => !record.valid).map(({ line, id, reason, detail }) => ({ line, id, reason, detail })),
+    problems: records
+      .filter((record) => !record.valid)
+      .map(({ line, id, reason, detail }) => ({ line, id, reason, detail })),
   };
 }
