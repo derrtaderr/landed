@@ -212,6 +212,7 @@ test('a carried claim keeps accounting for the records it covered, so nothing lo
       name: 'runner',
       kinds: ['executed'],
       requiredKeys: { executed: ['workflowId'] },
+      subjectKey: 'workflowId',
       async lookup() {
         return {
           found: true,
@@ -223,11 +224,12 @@ test('a carried claim keeps accounting for the records it covered, so nothing lo
         return {
           source: { complete: true, empty: false },
           records: [
-            { kind: 'execution', id: 'e-1', workflowId: 'wf-201', startedAt: '2026-09-26T10:30:00.000Z', status: 'success' },
-            // A run nobody claimed. Its presence in the report is the proof that the second pass
-            // enumerated at all, so "e-1 was not reported" cannot pass by the enumeration
+            { kind: 'execution', id: 'e-1', subject: 'wf-201', workflowId: 'wf-201', startedAt: '2026-09-26T10:30:00.000Z', status: 'success' },
+            // A run nobody claimed, of the SAME workflow, since D2 scopes enumeration to the
+            // subjects the claims named. Its presence in the report is the proof that the second
+            // pass enumerated at all, so "e-1 was not reported" cannot pass by the enumeration
             // silently never running.
-            { kind: 'execution', id: 'e-stray', workflowId: 'wf-999', startedAt: '2026-09-26T10:40:00.000Z', status: 'success' },
+            { kind: 'execution', id: 'e-stray', subject: 'wf-201', workflowId: 'wf-201', startedAt: '2026-09-26T10:40:00.000Z', status: 'success' },
           ],
         };
       },

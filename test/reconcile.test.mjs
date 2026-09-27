@@ -18,6 +18,8 @@ function adapterReturning(name, kinds, response, extras = {}) {
       name,
       kinds,
       requiredKeys: {},
+      // Declared so enumeration can be scoped to the subjects the claims named, per decision D2.
+      subjectKey: 'workflowId',
       async lookup() {
         return typeof response === 'function' ? response() : response;
       },
@@ -302,8 +304,10 @@ test('executed-never-claimed: an enumerated run that no claim accounts for', asy
         return {
           source: COMPLETE,
           records: [
-            { kind: 'execution', id: 'e-1', workflowId: 'wf-201', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' },
-            { kind: 'execution', id: 'e-2', workflowId: 'wf-999', startedAt: '2026-09-26T10:50:00.000Z', status: 'success' },
+            { kind: 'execution', id: 'e-1', subject: 'wf-201', workflowId: 'wf-201', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' },
+            // Same workflow, a run the claim's own receipt did not cover. A DIFFERENT workflow would
+            // now be out of scope, which is the point of D2.
+            { kind: 'execution', id: 'e-2', subject: 'wf-201', workflowId: 'wf-201', startedAt: '2026-09-26T10:50:00.000Z', status: 'success' },
           ],
         };
       },
@@ -314,7 +318,8 @@ test('executed-never-claimed: an enumerated run that no claim accounts for', asy
 
   assert.equal(outcome.summary.executed_never_claimed, 1);
   const extra = outcome.results.find((result) => result.verdict === 'executed-never-claimed');
-  assert.equal(extra.state, 'contradicted');
+  // Its own row class since D2: an unclaimed run contradicts no claim.
+  assert.equal(extra.state, 'unclaimed');
   assert.match(extra.detail, /e-2/);
   assert.equal(extra.claim_id, null);
 });
@@ -343,7 +348,7 @@ test('a receipt that declares no coverage accounts for nothing, which is the saf
       async enumerate() {
         return {
           source: COMPLETE,
-          records: [{ kind: 'execution', id: 'e-1', workflowId: 'wf-201', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }],
+          records: [{ kind: 'execution', id: 'e-1', subject: 'wf-201', workflowId: 'wf-201', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }],
         };
       },
     },

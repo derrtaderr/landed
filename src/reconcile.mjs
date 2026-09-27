@@ -26,6 +26,30 @@ function matched(base, reason, detail) {
 // a clock that is wrong.
 export const CLAIM_LAG_TOLERANCE_MS = 60 * 1000;
 
+// A claim that names no window is bounded to this much either side of its own instant, rather than
+// matching any record the source happens to hold. Ship-check F-10: a windowless claim matched a fire
+// three days older than itself. Six hours is wide enough for a late claim from a slow workflow and
+// narrow enough that yesterday's run is not this claim's evidence.
+export const DEFAULT_WINDOW_HALF_WIDTH_MS = 6 * 60 * 60 * 1000;
+
+// The window a claim is actually read against, and where it came from. A result carries both, so
+// nobody has to guess which one graded it.
+export function effectiveWindow(claim) {
+  const declared = claim.target?.window;
+  if (declared !== undefined && declared !== null) return { window: declared, source: 'claim' };
+
+  const at = Date.parse(claim.at);
+  if (Number.isNaN(at)) return { window: null, source: 'none' };
+
+  return {
+    window: {
+      from: new Date(at - DEFAULT_WINDOW_HALF_WIDTH_MS).toISOString(),
+      to: new Date(at + DEFAULT_WINDOW_HALF_WIDTH_MS).toISOString(),
+    },
+    source: 'default',
+  };
+}
+
 function withinWindow(instant, window, lagToleranceMs = 0) {
   if (window === undefined || window === null) return true;
   const at = Date.parse(instant);
@@ -229,10 +253,12 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
     kind: record.claim?.kind ?? null,
     adapter: record.claim?.target?.adapter ?? null,
     at: record.claim?.at ?? null,
-    // The window this claim asked about, kept on the result so that a run which CARRIES this
+    // The window this claim was read against, kept on the result so that a run which CARRIES this
     // claim forward can still derive the enumeration scope from it. Without it, the second run
     // enumerates nothing and every unclaimed record silently stops being reported.
-    window: record.claim?.target?.window ?? null,
+    window: null,
+    window_source: 'none',
+    target: record.claim?.target ?? null,
     evidence: record.claim?.evidence ?? null,
     receipt: null,
   };
@@ -240,6 +266,9 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   if (!record.valid) return unresolved(base, record.reason, record.detail);
 
   const claim = record.claim;
+  const { window, source: windowSource } = effectiveWindow(claim);
+  base.window = window;
+  base.window_source = windowSource;
   const adapter = adapters[claim.target.adapter];
   if (adapter === undefined) {
     return unresolved(base, 'UNKNOWN_ADAPTER', `no adapter named ${claim.target.adapter} is registered`);
@@ -266,7 +295,7 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   // window that, by its own clock, has not happened yet; which of the two is wrong cannot be
   // decided from here, so neither is believed. Checked before the lookup, because it costs
   // nothing to notice and a lookup cannot settle it.
-  if (!withinWindow(claim.at, claim.target.window, CLAIM_LAG_TOLERANCE_MS)) {
+  if (windowSource === 'claim' && !withinWindow(claim.at, claim.target.window, CLAIM_LAG_TOLERANCE_MS)) {
     return unresolved(
       base,
       'CLOCK_SKEW',
@@ -276,7 +305,9 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
 
   let receipt;
   try {
-    receipt = await adapter.lookup(claim.target, deps);
+    // The adapter reads against the EFFECTIVE window, so an adapter never has to invent a bound of
+    // its own and a windowless claim cannot match a record from any distance away (F-10).
+    receipt = await adapter.lookup({ ...claim.target, window }, deps);
   } catch (error) {
     return unresolved(base, 'ADAPTER_UNREACHABLE', `${adapter.name} threw: ${error.message}`);
   }
@@ -334,21 +365,32 @@ function bareResult(adapter, fields) {
     adapter,
     at: null,
     window: null,
+    window_source: 'none',
+    target: null,
     evidence: null,
     receipt: null,
     verdict: null,
+    carried: false,
     ...fields,
   };
 }
 
-// Every record the adapter can enumerate that no claim accounted for. An adapter with no
-// enumerate never produces this verdict, which is the honest outcome; a zero from an adapter
-// that cannot look is not the same as a zero from one that looked.
-async function findUnclaimed(records, adapters, deps, results) {
-  // What a claim ACCOUNTS FOR comes from the receipt's own declaration: `facts.id` for a
-  // single record, `facts.covers` for a receipt that stands for several. The core knowing which
-  // vendor field held the ids was the gap test/new-adapter.test.mjs opened; a receipt that
-  // declares no coverage accounts for nothing, which is the safe default.
+// What a claim is ABOUT, in the adapter's own terms. n8n declares `workflowId`; an adapter that
+// declares no subject key cannot be scoped, and so is only enumerated under --enumerate all.
+function subjectOf(adapter, target) {
+  const key = adapter.subjectKey;
+  const value = key === undefined ? undefined : target?.[key];
+  return value === undefined ? undefined : String(value);
+}
+
+// Runs the authoritative system knows about that no claim accounted for. Decision D2:
+//
+//   * scoped to the subjects the claims named, unless --enumerate all
+//   * suppressed for any subject whose own claim could not be resolved, because a claim we could
+//     not read cannot tell us which of its runs it covered (F-03)
+//   * its own row class, never a contradiction of a claim that does not exist
+async function findUnclaimed(records, adapters, deps, results, enumerateAll) {
+  // What the claims already account for, from the receipts' own declarations.
   const accounted = new Set();
   for (const result of results) {
     const facts = result.receipt?.facts;
@@ -361,16 +403,47 @@ async function findUnclaimed(records, adapters, deps, results) {
   for (const [name, adapter] of Object.entries(adapters)) {
     if (typeof adapter.enumerate !== 'function') continue;
 
-    // The scope is the union of the windows the claims themselves asked about. Enumerating
-    // wider would report runs from a period nobody was reconciling.
-    const windows = records
-      .filter((record) => record.valid && record.claim.target.adapter === name && record.claim.target.window)
-      .map((record) => record.claim.target.window);
+    const mine = records.filter((record) => record.valid && record.claim.target.adapter === name);
+    if (mine.length === 0) continue;
+
+    const subjects = new Set();
+    for (const record of mine) {
+      const subject = subjectOf(adapter, record.claim.target);
+      if (subject !== undefined) subjects.add(subject);
+    }
+
+    // A subject whose own claim came back unresolved is not enumerated at all. Its runs are not
+    // "unclaimed"; they are runs nobody could attribute, and reporting them as unclaimed is the
+    // F-03 false contradiction, seven of them from one missing export.
+    const suppressed = new Set();
+    for (const result of results) {
+      if (result.adapter !== name || result.state !== 'unresolved') continue;
+      const subject = subjectOf(adapter, result.target ?? {});
+      if (subject !== undefined) suppressed.add(subject);
+    }
+
+    for (const subject of [...suppressed].sort()) {
+      extras.push(bareResult(name, {
+        state: 'unresolved',
+        reasons: ['ENUMERATION_SUPPRESSED'],
+        detail: `${name} did not enumerate ${subject}, because the claim about it could not be resolved; its runs cannot be attributed either way`,
+      }));
+    }
+
+    const scopeSubjects = enumerateAll ? null : [...subjects].filter((subject) => !suppressed.has(subject));
+    if (scopeSubjects !== null && scopeSubjects.length === 0) continue;
+
+    // The union of the windows the claims were read against. Enumerating wider would report runs
+    // from a period nobody was reconciling.
+    const windows = results
+      .filter((result) => result.adapter === name && result.window !== null && result.window !== undefined)
+      .map((result) => result.window);
     if (windows.length === 0) continue;
 
     const scope = {
       from: windows.map((window) => window.from).sort()[0],
       to: windows.map((window) => window.to).sort().at(-1),
+      subjects: scopeSubjects,
     };
 
     let listing;
@@ -402,13 +475,19 @@ async function findUnclaimed(records, adapters, deps, results) {
 
     for (const found of listing?.records ?? []) {
       if (accounted.has(`${name}:${found.id}`)) continue;
+      const subject = found.subject === undefined ? undefined : String(found.subject);
+      if (subject !== undefined && suppressed.has(subject)) continue;
+      if (scopeSubjects !== null && subject !== undefined && !scopeSubjects.includes(subject)) continue;
+
       extras.push(bareResult(name, {
         at: found.startedAt ?? null,
         receipt: { found: true, source: listing.source, facts: found },
-        state: 'contradicted',
+        // Its own row class. An unclaimed run contradicts no claim, so it is not `contradicted`,
+        // and it is not a claim, so it is none of the three claim states.
+        state: 'unclaimed',
         verdict: 'executed-never-claimed',
         reasons: ['EXECUTED_NEVER_CLAIMED'],
-        detail: `${name} ran ${found.id} (${found.workflowId ?? 'unknown workflow'}) at ${found.startedAt}; no claim accounts for it`,
+        detail: `${name} ran ${found.id} (${found.workflowId ?? subject ?? 'unknown subject'}) at ${found.startedAt}; no claim accounts for it`,
       }));
     }
   }
@@ -416,12 +495,16 @@ async function findUnclaimed(records, adapters, deps, results) {
   return extras;
 }
 
-// A carried result stands in for the claim that produced it, so the enumeration scope still
-// covers the window that claim asked about.
+// A carried result stands in for the claim that produced it, so the enumeration scope still covers
+// the subject and the window that claim asked about.
 function carriedRecords(carried) {
   return carried
-    .filter((result) => result.window !== null && result.window !== undefined)
-    .map((result) => ({ valid: true, claim: { target: { adapter: result.adapter, window: result.window } } }));
+    .filter((result) => result.claim_id !== null && result.window !== null && result.window !== undefined)
+    .map((result) => ({
+      id: result.claim_id,
+      valid: true,
+      claim: { target: { ...(result.target ?? {}), adapter: result.adapter, window: result.window } },
+    }));
 }
 
 export async function reconcile({
@@ -432,6 +515,8 @@ export async function reconcile({
   // Results settled by an earlier run. They are not re-looked-up, and they are here rather than
   // simply omitted because their receipts still account for the records they covered.
   carried = [],
+  // Widen enumeration past the subjects the claims named. Off by default, per decision D2.
+  enumerateAll = false,
 }) {
   if (records.length === 0 && carried.length === 0) {
     return {
@@ -451,15 +536,20 @@ export async function reconcile({
   }
   results.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
 
-  const extras = await findUnclaimed([...records, ...carriedRecords(carried)], adapters, deps, results);
+  const extras = await findUnclaimed([...records, ...carriedRecords(carried)], adapters, deps, results, enumerateAll);
   const all = [...results, ...extras];
 
   return { refusal: null, results: all, summary: summarize(all), strict_ok: strictOk(all) };
 }
 
 function summarize(results) {
+  const claims = results.filter((result) => result.claim_id !== null);
   return {
     total: results.length,
+    // Claims and unclaimed runs are counted apart, because one is an answer about something
+    // somebody asserted and the other is a record nobody mentioned.
+    claims: claims.length,
+    unclaimed: results.filter((result) => result.state === 'unclaimed').length,
     matched: results.filter((result) => result.state === 'matched').length,
     // What this run learned that an earlier one had not already settled. An hourly cron whose
     // summary restates every agreement it has ever reached is a summary nobody reads.
@@ -475,9 +565,9 @@ function summarize(results) {
 // --strict. A run with any contradiction is also not ok, because a contradiction is the thing
 // this tool was built to surface.
 function strictOk(results) {
-  if (results.length === 0) return false;
-  if (results.some((result) => result.state === 'contradicted')) return false;
-  return results.every((result) => result.state === 'matched');
+  const claims = results.filter((result) => result.claim_id !== null);
+  if (claims.length === 0) return false;
+  return claims.every((result) => result.state === 'matched');
 }
 
 export { summarize };

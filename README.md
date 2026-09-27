@@ -54,10 +54,10 @@ $ node bin/landed.mjs demo --out /tmp/landed-demo
 landed 2026-09-26T11:00:00.000Z
 
   7 contradicted claims
-  3 unresolved claims
+  4 unresolved claims
   2 matched claims
-  1 orphaned claim
-  1 run nobody claimed
+  2 orphaned claims
+  2 runs nobody claimed
 
   c-2         contradicted  n8n     FIRED_WHILE_INACTIVE
       wf-202 fired 1 time(s) while its active flag was false (first at 2026-09-26T10:05:00.000Z)
@@ -71,28 +71,34 @@ landed 2026-09-26T11:00:00.000Z
       github read its source and has no record for repo=example-org/example-repo branch=lane/never-pushed
   c-8         contradicted  n8n     COUNT_VS_CADENCE
       wf-207 fired 1 time(s) in the window; the declared cadence expects 2
-  (unclaimed) contradicted  n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
-      n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
+  c-12        contradicted  n8n     ORPHANED_CLAIM [orphaned-claim]
+      n8n read its source and has no record for workflowId=wf-206
   c-9         unresolved    n8n     CLOCK_SKEW
       the claim is dated 2026-09-26T09:30:00.000Z, outside the window it reports on (2026-09-26T10:00:00.000Z to 2026-09-26T11:00:00.000Z)
   c-10        unresolved    -       MALFORMED_CLAIM
       line 10: kind is not one of sent, created, updated, merged, pushed, executed, completed: "delivered"
   c-11        unresolved    gmail   UNKNOWN_ADAPTER
       no adapter named gmail is registered
+  (unclaimed) unresolved    n8n     ENUMERATION_SUPPRESSED
+      n8n did not enumerate wf-208, because the claim about it could not be resolved; its runs cannot be attributed either way
   c-1         matched       n8n     FIRED_AS_CLAIMED
       wf-201 fired 1 time(s) in the window (e-1002)
   c-6         matched       github  MERGED
       example-org/example-repo#38 is merged at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
+  (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
+      n8n ran e-1001 (wf-201) at 2026-09-26T09:58:00.000Z; no claim accounts for it
+  (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
+      n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
 
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json
-  7 contradicted, 3 unresolved, 2 matched, out of 12 joined records
+  7 contradicted, 4 unresolved, 2 matched, out of 15 joined records
 
   Every line above was read from the system of record, not from what an agent said.
 ```
 
-Twelve rows, from eleven claims. Two agreed, seven disagreed, three could not be decided, and one
-row has no claim id at all because it is a run nobody claimed. Every one of those outcomes names
-the rule that produced it and carries the detail in the authoritative system's own words.
+Twelve claims went in. Some agreed, some disagreed, some could not be decided, and one row has no
+claim id at all because it is a run nobody claimed. Every outcome names the rule that produced it
+and carries the detail in the authoritative system's own words.
 
 What the corpus is showing you, case by case:
 
@@ -107,7 +113,8 @@ What the corpus is showing you, case by case:
 | `c-9` | A claim dated before the window it reports on, so the agent's clock and its own window disagree |
 | `c-10` | A claim whose `kind` is not in the closed set, refused by name rather than dropped |
 | `c-11` | A claim for an adapter phase 1 does not have. Named, not silently skipped |
-| `(unclaimed)` | An execution that ran inside the window and that no claim accounts for |
+| `c-12` | A claim that the export ran before 10:30. It ran at 10:55, so the claim is orphaned |
+| `(unclaimed)` | That 10:55 run itself: a run of a workflow this operator watches, inside the reconciled window, that no claim accounts for |
 
 ## The three states, and why the third one exists
 
@@ -165,7 +172,7 @@ than dropped:
 $ node bin/landed.mjs validate --claims fixtures/claims.jsonl
 landed validate fixtures/claims.jsonl
 
-  10 claims well formed
+  11 claims well formed
   1 claim refused
 
   line 10   c-10      MALFORMED_CLAIM

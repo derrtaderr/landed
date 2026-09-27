@@ -9,3 +9,4 @@
 {"id":"c-9","at":"2026-09-26T09:30:00.000Z","actor":"digest-mailer","kind":"executed","target":{"adapter":"n8n","workflowId":"wf-208","window":{"from":"2026-09-26T10:00:00.000Z","to":"2026-09-26T11:00:00.000Z"}},"evidence":{"printed":"mailer fired"}}
 {"id":"c-10","at":"2026-09-26T10:45:00.000Z","actor":"outreach-agent","kind":"delivered","target":{"adapter":"n8n","workflowId":"wf-201"},"evidence":{"printed":"delivered to 40 leads"}}
 {"id":"c-11","at":"2026-09-26T10:46:00.000Z","actor":"outreach-agent","kind":"sent","target":{"adapter":"gmail","messageId":"msg-88f1"},"evidence":{"printed":"sent successfully"}}
+{"id":"c-12","at":"2026-09-26T10:21:00.000Z","actor":"warehouse-exporter","kind":"executed","target":{"adapter":"n8n","workflowId":"wf-206","window":{"from":"2026-09-26T10:00:00.000Z","to":"2026-09-26T10:30:00.000Z"}},"evidence":{"printed":"export finished before the 10:30 cutoff"}}
