@@ -74,7 +74,7 @@ landed 2026-09-26T11:00:00.000Z
   (unclaimed) contradicted  n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
   c-9         unresolved    n8n     CLOCK_SKEW
-      the claim is dated 2026-09-26T09:30:00.000Z, outside the window read (2026-09-26T09:58:00.000Z to 2026-09-26T11:05:00.000Z)
+      the claim is dated 2026-09-26T09:30:00.000Z, outside the window it reports on (2026-09-26T10:00:00.000Z to 2026-09-26T11:00:00.000Z)
   c-10        unresolved    -       MALFORMED_CLAIM
       line 10: kind is not one of sent, created, updated, merged, pushed, executed, completed: "delivered"
   c-11        unresolved    gmail   UNKNOWN_ADAPTER
@@ -104,7 +104,7 @@ What the corpus is showing you, case by case:
 | `c-5` | A PR the lane record says was merged. GitHub says it is open |
 | `c-7` | A branch an agent said it pushed. GitHub answers 404 |
 | `c-8` | A workflow that ran once against a declared cadence of twice |
-| `c-9` | A claim dated before the window the export covers, so the read cannot decide it |
+| `c-9` | A claim dated before the window it reports on, so the agent's clock and its own window disagree |
 | `c-10` | A claim whose `kind` is not in the closed set, refused by name rather than dropped |
 | `c-11` | A claim for an adapter phase 1 does not have. Named, not silently skipped |
 | `(unclaimed)` | An execution that ran inside the window and that no claim accounts for |
@@ -131,7 +131,7 @@ eventually say "it landed" about something it never looked at. These five states
 | The export holds zero records | `EMPTY_SOURCE` |
 | The adapter could not be read | `ADAPTER_UNREACHABLE` |
 | The read was truncated or rate limited | `PARTIAL_READ` |
-| The claim is dated outside the window read | `CLOCK_SKEW` |
+| The claim is dated outside the window it reports on, or outside a bounded read | `CLOCK_SKEW` |
 
 The second one is the one that looks most like good news. Zero executions in an export is
 indistinguishable from a failed export, so an absence is only evidence when the source returned

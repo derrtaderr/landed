@@ -21,13 +21,18 @@ function matched(base, reason, detail) {
   return { ...base, state: 'matched', verdict: null, reasons: [reason], detail };
 }
 
-function withinWindow(instant, window) {
+// A claim is written AFTER the work it describes, so its instant is allowed to fall a little past
+// the end of the window it reports on. One minute, which covers a slow last node without covering
+// a clock that is wrong.
+export const CLAIM_LAG_TOLERANCE_MS = 60 * 1000;
+
+function withinWindow(instant, window, lagToleranceMs = 0) {
   if (window === undefined || window === null) return true;
   const at = Date.parse(instant);
   const from = Date.parse(window.from);
   const to = Date.parse(window.to);
   if (Number.isNaN(at) || Number.isNaN(from) || Number.isNaN(to)) return true;
-  return at >= from && at <= to;
+  return at >= from && at <= to + lagToleranceMs;
 }
 
 // The named n8n checks, applied to a `fires` receipt. They live here rather than in the
@@ -202,6 +207,18 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
       base,
       'MALFORMED_CLAIM',
       `target is missing the join key(s) ${missing.join(', ')} that ${adapter.name} needs for a ${claim.kind} claim`,
+    );
+  }
+
+  // A claim that disagrees with ITSELF. An agent whose clock is behind stamps a claim about a
+  // window that, by its own clock, has not happened yet; which of the two is wrong cannot be
+  // decided from here, so neither is believed. Checked before the lookup, because it costs
+  // nothing to notice and a lookup cannot settle it.
+  if (!withinWindow(claim.at, claim.target.window, CLAIM_LAG_TOLERANCE_MS)) {
+    return unresolved(
+      base,
+      'CLOCK_SKEW',
+      `the claim is dated ${claim.at}, outside the window it reports on (${claim.target.window.from} to ${claim.target.window.to})`,
     );
   }
 

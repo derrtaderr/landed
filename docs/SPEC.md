@@ -136,7 +136,7 @@ produce `matched`.
 | 2 | Empty source (the export has zero records) | `unresolved` | `EMPTY_SOURCE` |
 | 3 | Adapter unreachable | `unresolved` | `ADAPTER_UNREACHABLE` |
 | 4 | Partial read (export truncated, `gh` rate-limited) | `unresolved` | `PARTIAL_READ` |
-| 5 | Clock skew (claim instant outside the window read) | `unresolved` | `CLOCK_SKEW` |
+| 5 | Clock skew (the claim's own instant falls outside the window it reports on, or outside a read the adapter explicitly bounded) | `unresolved` | `CLOCK_SKEW` |
 
 An empty source is the one that looks most like good news and is not. Zero executions in an
 export is indistinguishable from a failed export, so absence is only evidence when the source
@@ -211,6 +211,21 @@ nothing stands between them on a schedule.
    disagreed. `executed-never-claimed` is `contradicted` for the same reason.
 3. **The privacy guard refuses non-allowlisted emails everywhere, not only outside `fixtures/`,**
    and adds home-path detection. Stricter than asked, same cost.
+4. **Clock skew is a property of the CLAIM, not of the source's record extents.** Found by the
+   live REST read on 2026-09-26. The n8n adapter first inferred its coverage from the earliest and
+   latest execution it held and refused any window those records did not span. Against a real
+   server that returned everything it had, a perfectly good claim came back `PARTIAL_READ` because
+   the first execution landed fifteen minutes into the window. The extent of the records present is
+   not the extent of what was looked at, and neither an export file nor an unfiltered REST page
+   carries metadata saying which. So `complete` now depends only on truncation (`nextCursor`), no
+   phase 1 adapter reports a `source.window`, and skew is checked where it is actually knowable:
+   a claim whose `at` falls outside the window it reports on, beyond a one-minute lag tolerance,
+   because a claim is written after the work it describes. `source.window` stays in the contract for
+   an adapter whose read IS explicitly bounded, and the false-green table still covers it.
+5. **A run that resolved nothing prints a warning, and still exits 0 without `--strict`.** The
+   dispatch ties the non-zero exit to `--strict`, so the exit code is unchanged. But a check that
+   lost its credential and a check with nothing to report must not look identical, so the output
+   says which. See §7.
 
 ## 6. Gate set, per area
 
@@ -227,3 +242,11 @@ Every one of these runs before the PR, and its exit code is reported.
 Freshness is coupled in the commit, not in a checklist: README example blocks, the demo's
 expected output, `.vibecodepm/flow.md` and `.vibecodepm/metrics.md` change in the same commit
 as the code that staled them.
+
+## 7. Open question for review
+
+**Should a run whose every claim is `unresolved` exit non-zero without `--strict`?** Today it
+exits 0, per the dispatch. That is a run which read nothing from the authoritative side, and in
+cron it is indistinguishable by exit code from a healthy quiet hour. The output says so plainly
+and `--strict` makes it fatal, so nothing is hidden; but the default may be the wrong one, and
+changing it is a decision about the contract rather than a bug fix.

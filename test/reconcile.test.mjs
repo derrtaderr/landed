@@ -456,6 +456,64 @@ test('strict_ok is true only when every claim matched', async () => {
   assert.equal(outcome.strict_ok, true);
 });
 
+// --- a claim that disagrees with itself -------------------------------------------------
+
+test('a claim dated outside its own window is CLOCK_SKEW, before any lookup runs', async () => {
+  // The clock-skew case that actually occurs: an agent whose clock is behind stamps a claim about
+  // a window that, by its own clock, has not happened yet. Which of the two is wrong cannot be
+  // decided from here, so neither is believed. It costs no adapter call to notice.
+  let lookedUp = false;
+  const adapters = {
+    runner: {
+      name: 'runner',
+      kinds: ['executed'],
+      requiredKeys: {},
+      async lookup() {
+        lookedUp = true;
+        return { found: true, source: COMPLETE, facts: { kind: 'fires', workflowId: 'wf-201', active: true, fires: [] } };
+      },
+    },
+  };
+
+  const outcome = await resolve(
+    claim({ kind: 'executed', at: '2026-09-26T09:30:00.000Z', target: { adapter: 'runner', workflowId: 'wf-201', window: WINDOW } }),
+    adapters,
+  );
+
+  assert.equal(outcome.results[0].state, 'unresolved');
+  assert.ok(outcome.results[0].reasons.includes('CLOCK_SKEW'));
+  assert.match(outcome.results[0].detail, /09:30/);
+  assert.equal(lookedUp, false);
+});
+
+test('a claim dated inside its own window is not clock skew', async () => {
+  const outcome = await resolve(
+    claim({ kind: 'executed', at: '2026-09-26T10:30:00.000Z', target: { adapter: 'runner', workflowId: 'wf-201', window: WINDOW } }),
+    adapterReturning('runner', ['executed'], {
+      found: true,
+      source: COMPLETE,
+      facts: { kind: 'fires', workflowId: 'wf-201', active: true, fires: [{ executionId: 'e-1', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }] },
+    }),
+  );
+
+  assert.equal(outcome.results[0].state, 'matched');
+});
+
+test('a claim dated slightly after its window ends is still inside a tolerance, since a claim follows its work', async () => {
+  // A claim is written after the thing it describes, so the instant is allowed to fall past the
+  // end of the window it reports on. Skew is about being outside by more than that.
+  const outcome = await resolve(
+    claim({ kind: 'executed', at: '2026-09-26T11:00:30.000Z', target: { adapter: 'runner', workflowId: 'wf-201', window: WINDOW } }),
+    adapterReturning('runner', ['executed'], {
+      found: true,
+      source: COMPLETE,
+      facts: { kind: 'fires', workflowId: 'wf-201', active: true, fires: [{ executionId: 'e-1', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }] },
+    }),
+  );
+
+  assert.equal(outcome.results[0].state, 'matched');
+});
+
 // --- alternative join keys -------------------------------------------------------------
 //
 // Some adapters need one of several keys rather than all of them: GitHub can answer a `pushed`
