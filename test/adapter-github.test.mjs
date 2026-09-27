@@ -1,7 +1,13 @@
-// The GitHub adapter, against recorded gh invocations.
+// The GitHub adapter, against recorded `gh api` calls.
 //
-// The four failure modes matter more than the happy path, because three of them look exactly
-// like "no such record" and only one of them IS one. docs/ADAPTERS.md holds the table.
+// Rewritten for decision D3. The wave 1 version stubbed `gh pr view` and classified on the text of
+// its error messages, which is exactly what ship-check F-05 and F-06 were about. Every call now goes
+// through `gh api`, because `gh api` reports an HTTP status and the higher-level verbs report
+// English.
+//
+// The detailed status and container-proof behaviour lives in test/github-classification.test.mjs.
+// This file pins the shapes the adapter returns from the recorded fixture corpus, which is what the
+// keyless demo replays.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +22,8 @@ const RECORDINGS = JSON.parse(readFileSync(join(ROOT, 'fixtures', 'github', 'gh-
 
 const REPO = 'example-org/example-repo';
 
-// Replays a recorded gh call, and refuses anything not recorded, so no test can quietly reach
-// the network.
+// Replays a recorded gh call and refuses anything not recorded, so no test can quietly reach the
+// network.
 function recorded(extra = {}) {
   const calls = { ...RECORDINGS, ...extra };
   return {
@@ -32,8 +38,10 @@ function recorded(extra = {}) {
   };
 }
 
-function failing(code, stderr) {
-  return { exec: () => ({ code, stdout: '', stderr }), config: {} };
+function apiResult(status, body) {
+  return status === 200
+    ? { code: 0, stdout: JSON.stringify(body), stderr: '' }
+    : { code: 1, stdout: '', stderr: `gh: error (HTTP ${status})` };
 }
 
 // --- the happy paths -------------------------------------------------------------------
@@ -56,30 +64,39 @@ test('an open PR is found and reported open, which is the disagreement the tool 
   assert.equal(receipt.facts.merge_commit, null);
 });
 
-test('a branch that exists on the remote is found, with the commit it points at', async () => {
+test('a closed but unmerged PR is reported CLOSED, not MERGED', async () => {
   const receipt = await github.lookup(
-    { repo: REPO, branch: 'lane/claims-format' },
-    recorded({
-      [`api repos/${REPO}/branches/lane/claims-format`]: {
-        code: 0,
-        stdout: JSON.stringify({ name: 'lane/claims-format', commit: { sha: '4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194' } }),
-        stderr: '',
-      },
-    }),
+    { repo: REPO, pr: 44 },
+    recorded({ [`api repos/${REPO}/pulls/44`]: apiResult(200, { number: 44, state: 'closed', merged: false, merged_at: null, head: { ref: 'lane/abandoned' } }) }),
+  );
+
+  assert.equal(receipt.facts.state, 'CLOSED');
+});
+
+test('a branch that exists on the remote is found, present, with the commit it points at', async () => {
+  const receipt = await github.lookup(
+    { repo: REPO, branch: 'lane/live' },
+    recorded({ [`api repos/${REPO}/branches/lane/live`]: apiResult(200, { name: 'lane/live', commit: { sha: 'abc1234' } }) }),
   );
 
   assert.equal(receipt.found, true);
   assert.equal(receipt.facts.kind, 'branch');
-  assert.equal(receipt.facts.commit, '4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194');
+  assert.equal(receipt.facts.present, true);
+  assert.equal(receipt.facts.commit, 'abc1234');
+});
+
+test('a branch deleted at merge is found as the MERGE, with the PR that did it', async () => {
+  const receipt = await github.lookup({ repo: REPO, branch: 'lane/claims-format' }, recorded());
+
+  assert.equal(receipt.found, true);
+  assert.equal(receipt.facts.present, false);
+  assert.equal(receipt.facts.merged_in_pr, 38);
 });
 
 test('a commit contained in the default branch reports on_default_branch', async () => {
   const receipt = await github.lookup(
     { repo: REPO, commit: 'abc1234' },
-    recorded({
-      [`api repos/${REPO}`]: { code: 0, stdout: JSON.stringify({ default_branch: 'main' }), stderr: '' },
-      [`api repos/${REPO}/compare/main...abc1234`]: { code: 0, stdout: JSON.stringify({ status: 'behind' }), stderr: '' },
-    }),
+    recorded({ [`api repos/${REPO}/compare/main...abc1234`]: apiResult(200, { status: 'behind' }) }),
   );
 
   assert.equal(receipt.facts.kind, 'commit');
@@ -91,10 +108,7 @@ test('a commit only on a side branch reports on_default_branch false', async () 
   for (const status of ['ahead', 'diverged']) {
     const receipt = await github.lookup(
       { repo: REPO, commit: 'abc1234' },
-      recorded({
-        [`api repos/${REPO}`]: { code: 0, stdout: JSON.stringify({ default_branch: 'main' }), stderr: '' },
-        [`api repos/${REPO}/compare/main...abc1234`]: { code: 0, stdout: JSON.stringify({ status }), stderr: '' },
-      }),
+      recorded({ [`api repos/${REPO}/compare/main...abc1234`]: apiResult(200, { status }) }),
     );
 
     assert.equal(receipt.facts.on_default_branch, false, status);
@@ -104,18 +118,15 @@ test('a commit only on a side branch reports on_default_branch false', async () 
 test('an identical compare also counts as contained', async () => {
   const receipt = await github.lookup(
     { repo: REPO, commit: 'abc1234' },
-    recorded({
-      [`api repos/${REPO}`]: { code: 0, stdout: JSON.stringify({ default_branch: 'trunk' }), stderr: '' },
-      [`api repos/${REPO}/compare/trunk...abc1234`]: { code: 0, stdout: JSON.stringify({ status: 'identical' }), stderr: '' },
-    }),
+    recorded({ [`api repos/${REPO}/compare/main...abc1234`]: apiResult(200, { status: 'identical' }) }),
   );
 
   assert.equal(receipt.facts.on_default_branch, true);
 });
 
-// --- the four ways a gh call ends, three of which are not an absence ---------------------
+// --- absence, and the container proof that licenses it -----------------------------------
 
-test('a 404 is the one genuine absence, and it is a COMPLETE read', async () => {
+test('a 404 inside a repo that IS readable is a genuine absence, and a COMPLETE read', async () => {
   const receipt = await github.lookup({ repo: REPO, branch: 'lane/never-pushed' }, recorded());
 
   assert.equal(receipt.found, false);
@@ -123,32 +134,59 @@ test('a 404 is the one genuine absence, and it is a COMPLETE read', async () => 
   assert.equal(receipt.reachable, undefined);
 });
 
-test('a missing gh binary is unreachable', async () => {
-  const receipt = await github.lookup({ repo: REPO, pr: 41 }, failing(127, 'gh: command not found'));
+test('the repo is read before any 404 inside it is believed', async () => {
+  const seen = [];
+  const deps = {
+    exec(file, args) {
+      seen.push(args.join(' '));
+      const key = args.join(' ');
+      if (key === `api repos/${REPO}/branches/lane/never-pushed`) return apiResult(404);
+      if (key === `api repos/${REPO}`) return RECORDINGS[`api repos/${REPO}`];
+      if (key.includes('pulls?state=all')) return apiResult(200, []);
+      throw new Error(`unexpected: ${key}`);
+    },
+    config: {},
+  };
+
+  await github.lookup({ repo: REPO, branch: 'lane/never-pushed' }, deps);
+
+  assert.ok(seen.includes(`api repos/${REPO}`), `the repo was never read: ${seen.join(' | ')}`);
+});
+
+// --- the ways a gh call ends --------------------------------------------------------------
+
+test('a missing gh binary is unreachable and says it is not installed', async () => {
+  const receipt = await github.lookup({ repo: REPO, pr: 41 }, { exec: () => ({ code: null, spawn_error: 'ENOENT', stdout: '', stderr: '' }), config: {} });
 
   assert.equal(receipt.reachable, false);
   assert.match(receipt.reason, /not installed/);
 });
 
 test('an unauthenticated gh is unreachable', async () => {
-  for (const stderr of ['gh: To get started with GitHub CLI, please run: gh auth login', 'gh: Bad credentials (HTTP 401)']) {
-    const receipt = await github.lookup({ repo: REPO, pr: 41 }, failing(1, stderr));
-    assert.equal(receipt.reachable, false, stderr);
-    assert.match(receipt.reason, /not authenticated/);
-  }
+  const receipt = await github.lookup({ repo: REPO, pr: 41 }, { exec: () => apiResult(401), config: {} });
+
+  assert.equal(receipt.reachable, false);
+  assert.match(receipt.reason, /not authenticated/);
 });
 
-test('a rate limited gh is an INCOMPLETE read, so the core resolves it unresolved', async () => {
-  const receipt = await github.lookup({ repo: REPO, pr: 41 }, failing(1, 'gh: API rate limit exceeded for user ID 1'));
+test('a 429 is an INCOMPLETE read, so the core resolves it unresolved', async () => {
+  const receipt = await github.lookup({ repo: REPO, pr: 41 }, { exec: () => apiResult(429), config: {} });
 
   assert.equal(receipt.found, false);
   assert.equal(receipt.source.complete, false);
 });
 
+test('a 403 is unreachable, because rate limit, SAML and scope look identical from here', async () => {
+  const receipt = await github.lookup({ repo: REPO, pr: 41 }, { exec: () => apiResult(403), config: {} });
+
+  assert.equal(receipt.reachable, false);
+  assert.match(receipt.reason, /403/);
+});
+
 test('an exec that throws outright is unreachable', async () => {
   const throwing = {
     exec() {
-      throw new Error('spawn gh ENOENT');
+      throw new Error('spawn gh EACCES');
     },
     config: {},
   };
@@ -165,11 +203,11 @@ test('gh output that is not JSON is unreachable rather than a crash', async () =
   assert.match(receipt.reason, /not JSON/);
 });
 
-test('an unexplained non-zero exit is unreachable, never an absence', async () => {
-  const receipt = await github.lookup({ repo: REPO, pr: 41 }, failing(2, 'gh: something nobody has classified'));
+test('a non-zero exit with no HTTP status at all is unreachable, never an absence', async () => {
+  const receipt = await github.lookup({ repo: REPO, pr: 41 }, { exec: () => ({ code: 2, stdout: '', stderr: 'gh: something nobody has classified' }), config: {} });
 
   assert.equal(receipt.reachable, false);
-  assert.match(receipt.reason, /exited 2/);
+  assert.match(receipt.reason, /without an HTTP status/);
 });
 
 // --- refusals --------------------------------------------------------------------------
@@ -186,4 +224,25 @@ test('no deps.exec at all is unreachable', async () => {
 
 test('the adapter has no enumerate, so it never produces executed-never-claimed', () => {
   assert.equal(github.enumerate, undefined);
+});
+
+test('every call the adapter makes goes through `gh api`, so every failure carries a status', async () => {
+  const seen = [];
+  const deps = {
+    exec(file, args) {
+      seen.push(args);
+      const key = args.join(' ');
+      if (RECORDINGS[key] !== undefined) return RECORDINGS[key];
+      if (key.includes('compare')) return apiResult(200, { status: 'behind' });
+      return apiResult(404);
+    },
+    config: {},
+  };
+
+  for (const target of [{ pr: 38 }, { branch: 'lane/never-pushed' }, { commit: 'abc1234' }]) {
+    await github.lookup({ repo: REPO, ...target }, deps);
+  }
+
+  assert.ok(seen.length >= 3);
+  for (const args of seen) assert.equal(args[0], 'api', args.join(' '));
 });

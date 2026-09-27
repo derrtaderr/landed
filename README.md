@@ -55,7 +55,7 @@ landed 2026-09-26T11:00:00.000Z
 
   7 contradicted claims
   4 unresolved claims
-  2 matched claims
+  3 matched claims
   2 orphaned claims
   2 runs nobody claimed
 
@@ -85,13 +85,15 @@ landed 2026-09-26T11:00:00.000Z
       wf-201 fired 1 time(s) in the window (e-1002)
   c-6         matched       github  MERGED
       example-org/example-repo#38 is merged at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
+  c-13        matched       github  MERGED_AND_BRANCH_DELETED
+      lane/claims-format is gone from the remote because PR #38 merged it at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-1001 (wf-201) at 2026-09-26T09:58:00.000Z; no claim accounts for it
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
 
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json
-  7 contradicted, 4 unresolved, 2 matched, out of 15 joined records
+  7 contradicted, 4 unresolved, 3 matched, out of 16 joined records
 
   Every line above was read from the system of record, not from what an agent said.
 ```
@@ -114,6 +116,7 @@ What the corpus is showing you, case by case:
 | `c-10` | A claim whose `kind` is not in the closed set, refused by name rather than dropped |
 | `c-11` | A claim for an adapter phase 1 does not have. Named, not silently skipped |
 | `c-12` | A claim that the export ran before 10:30. It ran at 10:55, so the claim is orphaned |
+| `c-13` | A branch an agent said it pushed, which GitHub has deleted. Its PR was merged, so the push DID happen and the claim is kept |
 | `(unclaimed)` | That 10:55 run itself: a run of a workflow this operator watches, inside the reconciled window, that no claim accounts for |
 
 ## The three states, and why the third one exists
@@ -172,7 +175,7 @@ than dropped:
 $ node bin/landed.mjs validate --claims fixtures/claims.jsonl
 landed validate fixtures/claims.jsonl
 
-  11 claims well formed
+  12 claims well formed
   1 claim refused
 
   line 10   c-10      MALFORMED_CLAIM
@@ -256,10 +259,30 @@ receipt. Of the four ways that call can end, only one is an absence:
 
 | What happened | Answer |
 |---|---|
-| `gh` is not installed | `unreachable` |
-| `gh` is not authenticated | `unreachable` |
-| The API rate limited the read | an incomplete read, so `unresolved` / `PARTIAL_READ` |
-| The API answered 404 | a genuine absence, and the only one of the four |
+| `gh` is not installed, or could not be started | `unreachable`. Read from the spawn error, not from stdout |
+| HTTP 401 | `unreachable`: not authenticated |
+| HTTP 403 | `unreachable`. A rate limit, a SAML-protected org and a token without the scope are indistinguishable from here, and none of them is an absence |
+| HTTP 429 | an incomplete read, so `unresolved` / `PARTIAL_READ` |
+| HTTP 404 | an absence **only once the container is proven present**, see below |
+| Any other status, or none | `unreachable` |
+
+Classification reads the spawn error, the exit code and the HTTP status. It never reads a response
+body. An earlier version scanned stdout too, so a successful `compare` whose commit messages happened
+to contain "Not Found" became a false absence on ordinary repositories.
+
+**A 404 is an absence only when the container is present.** GitHub answers 404 for a repo that does
+not exist, for a private repo your token cannot see, and for a branch deleted at merge. So a 404 on
+anything inside a repository triggers a read of the repository itself:
+
+| Case | Answer |
+|---|---|
+| The repo answers 404 or cannot be read | `unresolved` / `REPO_UNREACHABLE` for every claim on it |
+| A `pushed` branch is gone, and a PR from it was merged | `matched` / `MERGED_AND_BRANCH_DELETED`. The merge is the record that the push happened; the deletion is what GitHub does afterwards |
+| A `pushed` branch is gone, the repo is readable, and no PR from it was merged | `contradicted` / `orphaned-claim` |
+| A PR 404s and the repo is readable | `contradicted` / `orphaned-claim` |
+
+A current absence can only contradict a past claim when the container is present. Without that, "it
+is not there now" and "you cannot see it" are the same sentence.
 
 ### Phase 2
 

@@ -121,7 +121,7 @@ test('a pushed claim for a branch that exists on the remote is matched', async (
     adapterReturning('vcs', ['pushed'], {
       found: true,
       source: COMPLETE,
-      facts: { kind: 'branch', name: 'lane/x', commit: 'abc1234' },
+      facts: { kind: 'branch', name: 'lane/x', present: true, commit: 'abc1234' },
     }),
   );
 
@@ -531,8 +531,10 @@ test('a nested requiredKeys group is satisfied by any one of its keys', async ()
       name: 'vcs',
       kinds: ['pushed'],
       requiredKeys: { pushed: ['repo', ['branch', 'commit']] },
-      async lookup() {
-        return { found: true, source: COMPLETE, facts: { kind: 'branch', name: 'lane/x' } };
+      async lookup(target) {
+        // Answers about the branch that was asked for. A record naming a DIFFERENT branch is now a
+        // RECEIPT_TARGET_MISMATCH, which is m-2.
+        return { found: true, source: COMPLETE, facts: { kind: 'branch', name: target.branch, present: true, commit: 'abc1234' } };
       },
     },
   };

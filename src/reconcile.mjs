@@ -180,7 +180,7 @@ function interpret(base, claim, facts, doubleFireSeconds) {
   }
 
   if (claim.kind === 'pushed') {
-    if (facts?.kind === 'commit') {
+    if (shape === 'commit') {
       return facts.on_default_branch === true
         ? matched(base, 'ON_DEFAULT_BRANCH', `${facts.sha} is contained in ${facts.default_branch}`)
         : contradicted(
@@ -189,7 +189,30 @@ function interpret(base, claim, facts, doubleFireSeconds) {
             `${facts.sha} exists but is not contained in ${facts.default_branch}`,
           );
     }
-    return matched(base, 'PRESENT_ON_REMOTE', `${facts?.kind ?? 'record'} ${facts?.name ?? ''} exists on the remote`.replace(/\s+/g, ' ').trim());
+
+    // The record has to be about the branch that was claimed. Nothing used to check this, and a
+    // claimed "main?per_page=1" was matched against a record for "main" (m-2).
+    if (claim.target.branch !== undefined && facts.name !== undefined && facts.name !== claim.target.branch) {
+      return unresolved(
+        base,
+        'RECEIPT_TARGET_MISMATCH',
+        `the claim is about branch ${claim.target.branch} and the record returned is for ${facts.name}`,
+      );
+    }
+
+    // A branch deleted at merge is the normal end of a healthy push, not evidence it never happened.
+    // The merge is the record; the deletion is what GitHub does afterwards (D3).
+    if (facts.present === false) {
+      return facts.merged_in_pr === undefined
+        ? unresolved(base, 'BRANCH_ABSENT_UNEXPLAINED', `${facts.name} is not on the remote and nothing explains why`)
+        : matched(
+            base,
+            'MERGED_AND_BRANCH_DELETED',
+            `${facts.name} is gone from the remote because PR #${facts.merged_in_pr} merged it at ${facts.commit ?? 'an unreported sha'}`,
+          );
+    }
+
+    return matched(base, 'PRESENT_ON_REMOTE', `branch ${facts.name} exists on the remote at ${facts.commit ?? 'an unreported sha'}`);
   }
 
   if (claim.kind === 'completed') {
@@ -231,6 +254,19 @@ function describeTarget(target) {
     .filter(([key, value]) => key !== 'adapter' && key !== 'window' && key !== 'cadence' && typeof value !== 'object')
     .map(([key, value]) => `${key}=${value}`);
   return keys.length === 0 ? 'this target' : keys.join(' ');
+}
+
+// Whitespace, URL structure, a leading slash, or a parent-directory hop. Slashes and dots are fine
+// on their own: real branch names are full of them.
+const UNSAFE_VALUE = /[\s?#&%]|\.\.|^\/|\x00/;
+
+export function unsafeJoinValues(target) {
+  const offenders = [];
+  for (const [key, value] of Object.entries(target ?? {})) {
+    if (key === 'adapter' || typeof value !== 'string') continue;
+    if (UNSAFE_VALUE.test(value)) offenders.push(`${key}=${JSON.stringify(value)}`);
+  }
+  return offenders;
 }
 
 function missingJoinKeys(required, target) {
@@ -282,6 +318,17 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
     );
   }
 
+  // A join key value ends up in a URL path, so anything that could change the request's meaning is
+  // refused before a call is made rather than escaped on the way out (m-2).
+  const unsafe = unsafeJoinValues(claim.target);
+  if (unsafe.length > 0) {
+    return unresolved(
+      base,
+      'MALFORMED_CLAIM',
+      `target value(s) ${unsafe.join(', ')} carry characters that could change the meaning of a request path`,
+    );
+  }
+
   const missing = missingJoinKeys(adapter.requiredKeys?.[claim.kind] ?? [], claim.target);
   if (missing.length > 0) {
     return unresolved(
@@ -315,7 +362,10 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   const withReceipt = { ...base, receipt };
 
   if (receipt?.reachable === false) {
-    return unresolved(withReceipt, 'ADAPTER_UNREACHABLE', `${adapter.name} could not be read: ${receipt.reason}`);
+    // A container that could not be read is its own finding, because "the repository is not
+    // readable" and "the adapter is broken" send an operator to different places (D3).
+    const reason = /^the repository /.test(receipt.reason ?? '') ? 'REPO_UNREACHABLE' : 'ADAPTER_UNREACHABLE';
+    return unresolved(withReceipt, reason, `${adapter.name} could not be read: ${receipt.reason}`);
   }
 
   const source = receipt?.source;
