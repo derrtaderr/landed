@@ -557,18 +557,23 @@ export async function reconcile({
 
 function summarize(results) {
   const claims = results.filter((result) => result.claim_id !== null);
+  // A row that answers no claim and is not a record either: "I did not enumerate wf-201, because the
+  // claim about it could not be resolved". A fact about the run. Counting it as an unresolved CLAIM
+  // made the header read "2 unresolved claims" for one claim and one note.
+  const notes = results.filter((result) => result.claim_id === null && result.state !== 'unclaimed');
   return {
     total: results.length,
-    // Claims and unclaimed runs are counted apart, because one is an answer about something
-    // somebody asserted and the other is a record nobody mentioned.
+    // Claims, unclaimed runs and notes are counted apart, because one is an answer about something
+    // somebody asserted, one is a record nobody mentioned, and one is neither.
     claims: claims.length,
     unclaimed: results.filter((result) => result.state === 'unclaimed').length,
-    matched: results.filter((result) => result.state === 'matched').length,
+    notes: notes.length,
+    matched: claims.filter((result) => result.state === 'matched').length,
     // What this run learned that an earlier one had not already settled. An hourly cron whose
     // summary restates every agreement it has ever reached is a summary nobody reads.
     new_findings: results.filter((result) => result.carried !== true).length,
-    contradicted: results.filter((result) => result.state === 'contradicted').length,
-    unresolved: results.filter((result) => result.state === 'unresolved').length,
+    contradicted: claims.filter((result) => result.state === 'contradicted').length,
+    unresolved: claims.filter((result) => result.state === 'unresolved').length,
     orphaned_claims: results.filter((result) => result.verdict === 'orphaned-claim').length,
     executed_never_claimed: results.filter((result) => result.verdict === 'executed-never-claimed').length,
   };

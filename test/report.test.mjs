@@ -282,3 +282,50 @@ test('W-5: the demo says its own exit code is deliberate', () => {
   const text = renderReceipt(receiptOf([row({ state: 'contradicted', reasons: ['CLAIMED_COMPLETED_BUT_FAILED'] })]), { mode: 'demo' });
   assert.match(text, /exits 0/);
 });
+
+// --- diagnostic rows are neither claims nor unclaimed runs -------------------------------------
+
+test('a row that answers no claim is not counted as an unresolved CLAIM', async () => {
+  // Found while replaying the reviewer's F-03 case: with no workflows export the header read
+  // "2 unresolved claims" for one claim and one ENUMERATION_SUPPRESSED note. The note is a fact about
+  // the run, not an answer about anything anybody claimed.
+  const { parseClaims } = await import('../src/claims.mjs');
+  const { reconcile } = await import('../src/reconcile.mjs');
+  const { n8n } = await import('../src/adapters/n8n.mjs');
+  const { readFileSync } = await import('node:fs');
+
+  const claim = { id: 'b-1', at: '2026-09-26T10:31:00.000Z', actor: 'x', kind: 'executed', target: { adapter: 'n8n', workflowId: 'wf-201', window: { from: '2026-09-26T10:00:00.000Z', to: '2026-09-26T11:00:00.000Z' } } };
+  const { records } = parseClaims(JSON.stringify(claim));
+
+  const outcome = await reconcile({
+    records,
+    adapters: { n8n },
+    deps: { readFile: (path) => readFileSync(path, 'utf8'), config: { n8n: { executionsPath: 'fixtures/n8n/executions.json' } } },
+  });
+
+  assert.equal(outcome.summary.claims, 1);
+  assert.equal(outcome.summary.unresolved, 1, 'one CLAIM is unresolved');
+  assert.equal(outcome.summary.notes, 1, 'and one row is a note about the run');
+
+  const text = renderReceipt({ ...outcome, at: '2026-09-26T11:00:00.000Z' }, {});
+  assert.match(text, /1 unresolved claim\n/);
+  assert.match(text, /1 note about this run/);
+});
+
+test('the notes are rendered under their own heading, apart from the claims', async () => {
+  const receipt = receiptOf([
+    row({}),
+    row({ claim_id: null, state: 'unresolved', reasons: ['ENUMERATION_SUPPRESSED'], detail: 'did not enumerate wf-9', receipt: null }),
+  ]);
+  receipt.summary.claims = 1;
+  receipt.summary.notes = 1;
+  receipt.summary.unresolved = 0;
+
+  const text = renderReceipt(receipt, {});
+  assert.match(text, /notes on this run/i);
+  assert.ok(text.indexOf('did not enumerate') > text.indexOf('notes on this run'));
+});
+
+test('the notes heading is absent when there are none', () => {
+  assert.ok(!/notes on this run/i.test(renderReceipt(receiptOf([row({})]), {})));
+});

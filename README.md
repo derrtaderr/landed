@@ -54,9 +54,10 @@ $ node bin/landed.mjs demo --out /tmp/landed-demo
 landed 2026-09-26T11:00:00.000Z
 
   7 contradicted claims
-  4 unresolved claims
+  3 unresolved claims
   3 matched claims
   2 orphaned claims
+  1 note about this run
   1 run nobody claimed
 
   c-2         contradicted  n8n     FIRED_WHILE_INACTIVE
@@ -79,8 +80,6 @@ landed 2026-09-26T11:00:00.000Z
       line 10: kind is not one of sent, created, updated, merged, pushed, executed, completed: "delivered"
   c-11        unresolved    gmail   UNKNOWN_ADAPTER
       no adapter named gmail is registered; the registered ones are n8n, github
-  (unclaimed) unresolved    n8n     ENUMERATION_SUPPRESSED
-      n8n did not enumerate wf-208, because the claim about it could not be resolved; its runs cannot be attributed either way
   c-1         matched       n8n     FIRED_AS_CLAIMED
       wf-201 fired 1 time(s) in the window (e-1002)
   c-6         matched       github  MERGED
@@ -92,8 +91,12 @@ landed 2026-09-26T11:00:00.000Z
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
 
+  notes on this run (1)
+  (unclaimed) unresolved    n8n     ENUMERATION_SUPPRESSED
+      n8n did not enumerate wf-208, because the claim about it could not be resolved; its runs cannot be attributed either way
+
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json
-  7 contradicted, 4 unresolved, 3 matched, out of 15 joined records
+  7 contradicted, 3 unresolved, 3 matched, out of 15 joined records
 
   This is the recorded demo corpus, so it disagrees on purpose and still exits 0.
   A non-zero demo would read as a broken install rather than as a working tool.
