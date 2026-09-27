@@ -52,7 +52,7 @@ asserts every registered adapter's answers fall inside it.
 |---|---|
 | `complete: false` | The read was truncated, rate limited, or did not span the window asked about. Resolves to `unresolved` / `PARTIAL_READ`, for a found record as well as a missing one. |
 | `empty: true` | The source held zero records. Resolves to `unresolved` / `EMPTY_SOURCE`, never to an absence. |
-| `window` | What the read actually COVERED. A claim dated outside it resolves to `unresolved` / `CLOCK_SKEW`. Only set it for a window-scoped read; an id-keyed lookup is not bounded by a window and must not report one. |
+| `window` | What the read was EXPLICITLY BOUNDED to. A claim dated outside it resolves to `unresolved` / `CLOCK_SKEW`. Set it only when the read really was bounded, such as a query with a date filter. Neither of the phase 1 adapters sets it: an export file and an unfiltered REST page cannot attest to the range they were taken over, and inferring it from the earliest and latest record present made a live read refuse a perfectly good claim. See SPEC §5.4. |
 
 An adapter that cannot rule out an incomplete read says so here. That is the whole mechanism
 by which this tool refuses to inherit green from a failed observation.
@@ -91,7 +91,8 @@ keyless demo would stop being keyless.
 
 Reads an executions export (a downloaded JSON file or a saved `/executions` response, either an
 array or `{ data: [...] }`). `nextCursor` in the payload means more pages exist, which is an
-incomplete read. The `fired-while-inactive` check also needs the workflows export, and without
+incomplete read and the only thing that makes one. Since n8n pages backwards in time, an operator
+who exports the most recent page and asks about an older window gets exactly that refusal. The `fired-while-inactive` check also needs the workflows export, and without
 it the adapter answers `unreachable` rather than assuming the workflow was active.
 
 Live REST is optional, one page, and only attempted when both `LANDED_N8N_URL` and

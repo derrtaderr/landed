@@ -94,9 +94,14 @@ test('an id-keyed read reports NO window, because no window bounds it', async ()
 
 // --- the window-scoped question: did workflow W fire in window T? -----------------------
 
-test('a window-scoped read reports what the export actually covers', async () => {
+test('a read reports NO window, because an export cannot attest to what it was filtered on', async () => {
+  // This adapter used to infer coverage from the extent of the records it held, and report that
+  // as the window it had read. A live REST read then came back PARTIAL_READ for a perfectly good
+  // claim, because the earliest execution happened to be fifteen minutes into the window. The
+  // extent of the records present is not the extent of what was looked at, and an export carries
+  // no metadata that says which it is. So it claims neither.
   const receipt = await n8n.lookup({ workflowId: 'wf-201', window: WINDOW }, deps());
-  assert.deepEqual(receipt.source.window, { from: '2026-09-26T09:58:00.000Z', to: '2026-09-26T11:05:00.000Z' });
+  assert.equal(receipt.source.window, undefined);
 });
 
 test('fires are filtered to the window asked about, not the whole export', async () => {
@@ -154,12 +159,24 @@ test('a workflow that did not fire in the window is an absence, not a crash', as
   assert.equal(receipt.found, false);
 });
 
-test('a window the export does not span is an incomplete read', async () => {
-  // Asking about yesterday against an export that starts this morning cannot be answered, and
-  // an absence would be the wrong answer rather than a small inaccuracy.
+test('an untruncated export is a complete read even when its records start inside the window', async () => {
+  // The other half of the same lesson. An untruncated read returned everything the source has, so
+  // "nothing before 10:15" is a fact about the source rather than a gap in the read. Truncation is
+  // the only thing that makes a read incomplete here, and nextCursor is how the source says so.
   const receipt = await n8n.lookup(
     { workflowId: 'wf-201', window: { from: '2026-09-25T00:00:00.000Z', to: '2026-09-26T11:00:00.000Z' } },
     deps(),
+  );
+  assert.equal(receipt.source.complete, true);
+  assert.equal(receipt.found, true);
+});
+
+test('a truncated export is still an incomplete read, which is the protection that matters', async () => {
+  // n8n pages backwards in time, so an operator who exports the most recent page and asks about
+  // an older window gets a nextCursor. That is the real truncation case, and it still refuses.
+  const receipt = await n8n.lookup(
+    { workflowId: 'wf-201', window: WINDOW },
+    deps({ executionsPath: join(FIXTURES, 'executions-truncated.json') }),
   );
   assert.equal(receipt.source.complete, false);
   assert.equal(receipt.found, false);

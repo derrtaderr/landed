@@ -10,8 +10,14 @@
 //   1. An export of zero executions is not evidence that nothing ran. It reports `source.empty`
 //      and the core turns that into `unresolved`.
 //   2. A read that stopped early cannot rule anything out. n8n's response carries `nextCursor`
-//      when more pages exist, and an export whose coverage does not span the window asked about
-//      is equally incomplete. Both report `source.complete: false`.
+//      when more pages exist, and since it pages backwards in time, an operator who exports the
+//      most recent page and asks about an older window gets one. That is what `complete: false`
+//      is for, and it is the ONLY thing that sets it. An earlier version also inferred coverage
+//      from the extent of the records it held and refused a window those records did not span;
+//      a live REST read then came back PARTIAL_READ for a perfectly good claim because the first
+//      execution happened to be fifteen minutes in. The extent of the records present is not the
+//      extent of what was looked at, and an export carries no metadata saying which, so this
+//      adapter claims neither.
 //   3. The `active` flag lives in the workflows export, not the executions export. Without it
 //      the fired-while-inactive check cannot run, and saying so is the honest answer; assuming
 //      `active: true` would manufacture a green.
@@ -89,22 +95,6 @@ async function loadFromRest(which, config, deps) {
   return parsed === null ? { error: `the n8n API at ${url} returned an unexpected shape` } : parsed;
 }
 
-// What the export actually covers, taken from the records themselves rather than from what the
-// operator meant to download.
-function coverage(rows) {
-  const instants = rows
-    .map((row) => Date.parse(row.startedAt))
-    .filter((value) => !Number.isNaN(value))
-    .sort((a, b) => a - b);
-  if (instants.length === 0) return null;
-  return { from: new Date(instants[0]).toISOString(), to: new Date(instants.at(-1)).toISOString() };
-}
-
-function spans(covered, asked) {
-  if (covered === null || asked === undefined) return true;
-  return Date.parse(covered.from) <= Date.parse(asked.from) && Date.parse(covered.to) >= Date.parse(asked.to);
-}
-
 function withinWindow(instant, window) {
   if (window === undefined || window === null) return true;
   const at = Date.parse(instant);
@@ -132,10 +122,12 @@ export const n8n = {
     const rows = executions.rows;
     const truncated = executions.nextCursor !== null && executions.nextCursor !== undefined;
 
+    // No read here reports a `source.window`, because neither an export file nor an unfiltered
+    // REST page can attest to the range it was taken over. `source.window` in the contract is for
+    // an adapter whose read is EXPLICITLY bounded and can say so.
+    const source = { complete: !truncated, empty: rows.length === 0 };
+
     if (target.workflowId === undefined && target.executionId !== undefined) {
-      // An id-keyed read reports NO window. Reporting the export's coverage here would make a
-      // claim dated outside it look like clock skew when the exact record was in hand.
-      const source = { complete: !truncated, empty: rows.length === 0 };
       if (rows.length === 0) return { found: false, source };
 
       const row = rows.find((candidate) => String(candidate.id) === String(target.executionId));
@@ -155,13 +147,6 @@ export const n8n = {
         },
       };
     }
-
-    const covered = coverage(rows);
-    const source = {
-      complete: !truncated && spans(covered, target.window),
-      empty: rows.length === 0,
-      ...(covered === null ? {} : { window: covered }),
-    };
 
     if (rows.length === 0 || source.complete === false) return { found: false, source };
 
@@ -206,14 +191,9 @@ export const n8n = {
 
     const rows = executions.rows;
     const truncated = executions.nextCursor !== null && executions.nextCursor !== undefined;
-    const covered = coverage(rows);
 
     return {
-      source: {
-        complete: !truncated && spans(covered, scope),
-        empty: rows.length === 0,
-        ...(covered === null ? {} : { window: covered }),
-      },
+      source: { complete: !truncated, empty: rows.length === 0 },
       records: rows
         .filter((row) => withinWindow(row.startedAt, scope))
         .map((row) => ({

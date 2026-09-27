@@ -24,7 +24,9 @@ export function summaryLines(summary) {
 
   if (summary.orphaned_claims > 0) lines.push(`  ${plural(summary.orphaned_claims, 'orphaned claim')}`);
   if (summary.executed_never_claimed > 0) {
-    lines.push(`  ${plural(summary.executed_never_claimed, 'run nobody claimed')}`);
+    // Spelled out, because the default "add an s" turns this phrase into "run nobody claimeds",
+    // which is what a live run with five unclaimed executions printed.
+    lines.push(`  ${plural(summary.executed_never_claimed, 'run nobody claimed', 'runs nobody claimed')}`);
   }
 
   return lines;
@@ -62,6 +64,17 @@ export function renderReceipt(receipt, { receiptPath = null } = {}) {
   if (carried > 0) lines.push(`  ${plural(carried, 'claim')} carried from an earlier run and not re-read. Use --recheck to re-verify.`);
 
   lines.push('');
+
+  // A run that could not read the authoritative side at all is not a quiet run. Without this line
+  // an hourly check that lost its credential looks exactly like an hourly check with nothing to
+  // report, and the exit code only says so under --strict.
+  if (receipt.summary.total > 0 && receipt.summary.matched === 0 && receipt.summary.contradicted === 0) {
+    lines.push('  This run resolved nothing. Every claim is unresolved, which means the authoritative');
+    lines.push('  side was not read rather than that your systems agree. Run with --strict to make');
+    lines.push('  that a non-zero exit.');
+    lines.push('');
+  }
+
   lines.push('  Every line above was read from the system of record, not from what an agent said.');
 
   return lines.join('\n');
