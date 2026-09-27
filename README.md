@@ -70,7 +70,7 @@ landed 2026-09-26T11:00:00.000Z
   c-7         contradicted  github  ORPHANED_CLAIM [orphaned-claim]
       github read its source and has no record for repo=example-org/example-repo branch=lane/never-pushed
   c-8         contradicted  n8n     COUNT_VS_CADENCE
-      wf-207 fired 1 time(s) in the window; the declared cadence expects 2
+      wf-207 fired 1 time(s) in the window; the cadence the operator declared on the claim expects 2
   c-12        contradicted  n8n     ORPHANED_CLAIM [orphaned-claim]
       n8n read its source and has no record for workflowId=wf-206
   c-9         unresolved    n8n     CLOCK_SKEW

@@ -11,10 +11,30 @@ export const CLAIM_KINDS = ['sent', 'created', 'updated', 'merged', 'pushed', 'e
 
 const REQUIRED_FIELDS = ['id', 'at', 'actor', 'kind', 'target'];
 
+// Any ISO 8601 instant: Z, or an explicit offset. The docs said "ISO 8601 instant" and the code
+// accepted only the Z form (m-8). A bare local time is still refused, because an instant without a
+// zone is not an instant.
 function isIsoInstant(value) {
   if (typeof value !== 'string') return false;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.test(value)) return false;
   return !Number.isNaN(Date.parse(value));
+}
+
+// A window that does not parse used to slip past the skew check (NaN compares false everywhere) and
+// then produce a false orphaned-claim, because the adapter found no records inside it (m-1).
+function windowProblems(window) {
+  if (window === null || typeof window !== 'object' || Array.isArray(window)) {
+    return ['target.window is an object with from and to'];
+  }
+
+  const problems = [];
+  for (const edge of ['from', 'to']) {
+    if (!isIsoInstant(window[edge])) problems.push(`target.window.${edge} is not an ISO 8601 instant: ${JSON.stringify(window[edge])}`);
+  }
+  if (problems.length === 0 && Date.parse(window.from) > Date.parse(window.to)) {
+    problems.push(`target.window runs backwards: ${window.from} is after ${window.to}`);
+  }
+  return problems;
 }
 
 function problemsFor(parsed) {
@@ -42,6 +62,8 @@ function problemsFor(parsed) {
       problems.push('target is a JSON object naming an adapter');
     } else if (typeof target.adapter !== 'string' || target.adapter === '') {
       problems.push('target.adapter names the adapter that can answer for this claim');
+    } else if (target.window !== undefined && target.window !== null) {
+      problems.push(...windowProblems(target.window));
     }
   }
 

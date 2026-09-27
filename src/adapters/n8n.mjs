@@ -95,11 +95,16 @@ async function loadFromRest(which, config, deps) {
   return parsed === null ? { error: `the n8n API at ${url} returned an unexpected shape` } : parsed;
 }
 
+// HALF-OPEN: [from, to). The instant at `from` belongs to this window and the instant at `to` belongs
+// to the next one. Ship-check F-09: with both edges inclusive, an hourly workflow over a one-hour
+// window fired twice against a declared cadence of one and a healthy schedule was contradicted
+// forever. Half-open is the fix that makes consecutive windows partition time instead of overlapping
+// at every boundary.
 function withinWindow(instant, window) {
   if (window === undefined || window === null) return true;
   const at = Date.parse(instant);
   if (Number.isNaN(at)) return false;
-  return at >= Date.parse(window.from) && at <= Date.parse(window.to);
+  return at >= Date.parse(window.from) && at < Date.parse(window.to);
 }
 
 function statusOf(row) {
@@ -157,9 +162,18 @@ export const n8n = {
 
     if (rows.length === 0 || source.complete === false) return { found: false, source };
 
+    // Deduplicated by execution id. An export assembled from overlapping pages lists the same run
+    // twice, and two copies of one execution are 0 seconds apart, which read as a double fire (F-11).
+    const seen = new Set();
     const fires = rows
       .filter((row) => String(row.workflowId) === String(target.workflowId))
       .filter((row) => withinWindow(row.startedAt, target.window))
+      .filter((row) => {
+        const id = String(row.id);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
       .map((row) => ({ executionId: String(row.id), startedAt: row.startedAt, status: statusOf(row) }));
 
     if (fires.length === 0) return { found: false, source };
@@ -181,7 +195,10 @@ export const n8n = {
         kind: 'fires',
         workflowId: String(target.workflowId),
         name: workflow.name ?? null,
-        active: workflow.active === true,
+        // true, false, or null for "the export does not say". An absent key used to read as
+        // inactive, which turned every fire into a contradiction; the file's own comment said
+        // assuming true would manufacture a green, and assuming false manufactured a red (F-02).
+        active: typeof workflow.active === 'boolean' ? workflow.active : null,
         fires,
         // What this receipt stands for, so the core can tell an unclaimed run from one this
         // claim already covered without knowing what an n8n execution is.

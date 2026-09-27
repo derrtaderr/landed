@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "id": "h-1", "workflowId": "wf-207", "status": "success", "startedAt": "2026-09-26T10:00:00.000Z", "stoppedAt": "2026-09-26T10:00:20.000Z", "finished": true, "mode": "trigger" },
+    { "id": "h-2", "workflowId": "wf-207", "status": "success", "startedAt": "2026-09-26T11:00:00.000Z", "stoppedAt": "2026-09-26T11:00:19.000Z", "finished": true, "mode": "trigger" }
+  ],
+  "nextCursor": null
+}

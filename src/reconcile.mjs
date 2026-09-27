@@ -66,6 +66,17 @@ function checkFires(base, claim, facts, doubleFireSeconds) {
   const fires = [...(Array.isArray(facts.fires) ? facts.fires : [])];
   fires.sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
 
+  // The fired-while-inactive check needs the flag, and "the export does not say" is neither true nor
+  // false. Reading an absent flag as inactive contradicted every fire of a workflow whose export row
+  // simply omitted the key (F-02).
+  if (facts.active !== true && facts.active !== false && fires.length > 0) {
+    return unresolved(
+      base,
+      'ACTIVE_FLAG_UNKNOWN',
+      `${facts.workflowId} fired ${fires.length} time(s), and the workflows export does not say whether it was active, so fired-while-inactive cannot be decided`,
+    );
+  }
+
   if (facts.active === false && fires.length > 0) {
     return contradicted(
       base,
@@ -99,7 +110,7 @@ function checkFires(base, claim, facts, doubleFireSeconds) {
       return contradicted(
         base,
         'COUNT_VS_CADENCE',
-        `${facts.workflowId} fired ${fires.length} time(s) in the window; the declared cadence expects ${expected}`,
+        `${facts.workflowId} fired ${fires.length} time(s) in the window; the cadence the operator declared on the claim expects ${expected}`,
       );
     }
   }
@@ -119,6 +130,8 @@ function expectedFires(cadence, window) {
   if (Number.isFinite(cadence.every_seconds) && cadence.every_seconds > 0 && window) {
     const span = (Date.parse(window.to) - Date.parse(window.from)) / 1000;
     if (Number.isNaN(span)) return null;
+    // The window is half-open, so a span of exactly N intervals holds exactly N fires. With both
+    // edges inclusive it held N+1 and every healthy schedule was contradicted (F-09).
     return Math.floor(span / cadence.every_seconds);
   }
   return null;
