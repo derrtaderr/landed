@@ -25,6 +25,7 @@ export function summaryLines(summary) {
   ];
 
   if (summary.orphaned_claims > 0) lines.push(`  ${plural(summary.orphaned_claims, 'orphaned claim')}`);
+  if (summary.notes > 0) lines.push(`  ${plural(summary.notes, 'note about this run')}`);
   if (summary.executed_never_claimed > 0) {
     // Spelled out, because the default "add an s" turns this phrase into "run nobody claimeds",
     // which is what a live run with five unclaimed executions printed.
@@ -62,8 +63,9 @@ export function renderReceipt(receipt, { receiptPath = null, strict = false, mod
     (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || (a.line ?? 1e9) - (b.line ?? 1e9),
   );
 
-  const claims = rows.filter((row) => row.state !== 'unclaimed');
+  const claims = rows.filter((row) => row.claim_id !== null);
   const unclaimed = rows.filter((row) => row.state === 'unclaimed');
+  const notes = rows.filter((row) => row.claim_id === null && row.state !== 'unclaimed');
 
   for (const row of claims) lines.push(...rowLines(row));
 
@@ -72,6 +74,13 @@ export function renderReceipt(receipt, { receiptPath = null, strict = false, mod
   if (unclaimed.length > 0) {
     lines.push('', `  unclaimed runs (${unclaimed.length}) — records the authoritative system holds that no claim accounts for`);
     for (const row of unclaimed) lines.push(...rowLines(row));
+  }
+
+  // Facts about the RUN rather than answers about a claim: a subject that was not enumerated, a
+  // listing that could not be completed. They belong nowhere near the claim counts.
+  if (notes.length > 0) {
+    lines.push('', `  notes on this run (${notes.length})`);
+    for (const row of notes) lines.push(...rowLines(row));
   }
 
   lines.push('');
