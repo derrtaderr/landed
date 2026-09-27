@@ -34,7 +34,7 @@ function withinWindow(instant, window) {
 // adapter because they are interpretations, and an adapter that interprets is an adapter whose
 // verdicts nobody can re-derive.
 function checkFires(base, claim, facts, doubleFireSeconds) {
-  const fires = Array.isArray(facts.fires) ? [...facts.fires] : [];
+  const fires = [...(Array.isArray(facts.fires) ? facts.fires : [])];
   fires.sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
 
   if (facts.active === false && fires.length > 0) {
@@ -63,7 +63,7 @@ function checkFires(base, claim, facts, doubleFireSeconds) {
       return unresolved(
         base,
         'CADENCE_UNDECLARED',
-        'target.cadence needs expected_fires, or every_seconds together with a window',
+        'target.cadence needs expected_fires, or every_seconds together with a window; a cadence check with no derivable count is not a check',
       );
     }
     if (fires.length !== expected) {
@@ -82,9 +82,12 @@ function checkFires(base, claim, facts, doubleFireSeconds) {
   );
 }
 
+// The cadence comes from the claim rather than the workflow export, and docs/SPEC.md §5.1 says
+// why: an n8n schedule lives in an untyped node-parameters blob whose shape moves between
+// trigger types and versions, so parsing it is a guess that fails silently on the next release.
 function expectedFires(cadence, window) {
   if (Number.isInteger(cadence.expected_fires)) return cadence.expected_fires;
-  if (Number.isFinite(cadence.every_seconds) && window) {
+  if (Number.isFinite(cadence.every_seconds) && cadence.every_seconds > 0 && window) {
     const span = (Date.parse(window.to) - Date.parse(window.from)) / 1000;
     if (Number.isNaN(span)) return null;
     return Math.floor(span / cadence.every_seconds);
@@ -92,39 +95,43 @@ function expectedFires(cadence, window) {
   return null;
 }
 
-// What the claim asserts, against the facts of a record that exists.
+// What the claim ASSERTS, against the facts of a record that does exist. `found: true` only
+// says the authoritative system holds a record; whether that record agrees with the claim is
+// this function's question and nothing else's.
 function interpret(base, claim, facts, doubleFireSeconds) {
-  const kind = claim.kind;
-
   if (facts?.kind === 'fires') return checkFires(base, claim, facts, doubleFireSeconds);
 
-  if (kind === 'merged') {
+  if (claim.kind === 'merged') {
     if (facts?.state === 'MERGED') {
-      return matched(base, 'MERGED', `${facts.repo}#${facts.number} is merged at ${facts.merge_commit ?? 'an unreported sha'}`);
+      return matched(
+        base,
+        'MERGED',
+        `${facts.repo}#${facts.number} is merged at ${facts.merge_commit ?? 'an unreported sha'}`,
+      );
     }
     return contradicted(
       base,
       'CLAIMED_MERGED_NOT_MERGED',
-      `${facts.repo}#${facts.number} is ${String(facts?.state).toLowerCase()}, not merged`,
+      `${facts.repo}#${facts.number} is ${String(facts?.state ?? 'in an unreported state').toLowerCase()}, not merged`,
     );
   }
 
-  if (kind === 'pushed') {
+  if (claim.kind === 'pushed') {
     if (facts?.kind === 'commit') {
       return facts.on_default_branch === true
         ? matched(base, 'ON_DEFAULT_BRANCH', `${facts.sha} is contained in ${facts.default_branch}`)
-        : contradicted(base, 'COMMIT_NOT_ON_DEFAULT_BRANCH', `${facts.sha} exists but is not contained in ${facts.default_branch}`);
+        : contradicted(
+            base,
+            'COMMIT_NOT_ON_DEFAULT_BRANCH',
+            `${facts.sha} exists but is not contained in ${facts.default_branch}`,
+          );
     }
-    return matched(base, 'PRESENT_ON_REMOTE', `${facts?.kind ?? 'record'} ${facts?.name ?? ''} exists on the remote`.trim());
+    return matched(base, 'PRESENT_ON_REMOTE', `${facts?.kind ?? 'record'} ${facts?.name ?? ''} exists on the remote`.replace(/\s+/g, ' ').trim());
   }
 
-  if (kind === 'completed') {
+  if (claim.kind === 'completed') {
     if (facts?.status !== undefined && facts.status !== 'success') {
-      return contradicted(
-        base,
-        'CLAIMED_COMPLETED_BUT_FAILED',
-        `execution ${facts.id} has status ${facts.status}`,
-      );
+      return contradicted(base, 'CLAIMED_COMPLETED_BUT_FAILED', `execution ${facts.id} has status ${facts.status}`);
     }
     return matched(base, 'COMPLETED', `execution ${facts.id} finished with status ${facts.status ?? 'success'}`);
   }
@@ -221,23 +228,41 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   return interpret(withReceipt, claim, receipt.facts ?? {}, doubleFireSeconds);
 }
 
-// Every execution the adapter can enumerate that no claim accounted for. An adapter with no
-// enumerate simply never produces this verdict, which is the honest outcome rather than a
-// silent zero.
+function bareResult(adapter, fields) {
+  return {
+    claim_id: null,
+    line: null,
+    actor: null,
+    kind: null,
+    adapter,
+    at: null,
+    evidence: null,
+    receipt: null,
+    verdict: null,
+    ...fields,
+  };
+}
+
+// Every record the adapter can enumerate that no claim accounted for. An adapter with no
+// enumerate never produces this verdict, which is the honest outcome; a zero from an adapter
+// that cannot look is not the same as a zero from one that looked.
 async function findUnclaimed(records, adapters, deps, results) {
-  const claimedRecordIds = new Set();
+  const accounted = new Set();
   for (const result of results) {
     const facts = result.receipt?.facts;
-    if (facts?.kind === 'execution' && facts.id !== undefined) claimedRecordIds.add(`${result.adapter}:${facts.id}`);
+    if (facts?.kind === 'execution' && facts.id !== undefined) accounted.add(`${result.adapter}:${facts.id}`);
     if (facts?.kind === 'fires') {
-      for (const fire of facts.fires ?? []) claimedRecordIds.add(`${result.adapter}:${fire.executionId}`);
+      for (const fire of facts.fires ?? []) accounted.add(`${result.adapter}:${fire.executionId}`);
     }
   }
 
   const extras = [];
+
   for (const [name, adapter] of Object.entries(adapters)) {
     if (typeof adapter.enumerate !== 'function') continue;
 
+    // The scope is the union of the windows the claims themselves asked about. Enumerating
+    // wider would report runs from a period nobody was reconciling.
     const windows = records
       .filter((record) => record.valid && record.claim.target.adapter === name && record.claim.target.window)
       .map((record) => record.claim.target.window);
@@ -252,57 +277,39 @@ async function findUnclaimed(records, adapters, deps, results) {
     try {
       listing = await adapter.enumerate(scope, deps);
     } catch (error) {
-      extras.push({
-        claim_id: null,
-        line: null,
-        actor: null,
-        kind: null,
-        adapter: name,
-        at: null,
-        evidence: null,
-        receipt: null,
+      extras.push(bareResult(name, {
         state: 'unresolved',
-        verdict: null,
         reasons: ['ADAPTER_UNREACHABLE'],
         detail: `${name} could not enumerate its source: ${error.message}`,
-      });
+      }));
       continue;
     }
 
-    if (listing?.reachable === false || listing?.source?.complete === false) {
-      extras.push({
-        claim_id: null,
-        line: null,
-        actor: null,
-        kind: null,
-        adapter: name,
-        at: null,
-        evidence: null,
+    if (listing?.reachable === false || listing?.source?.complete === false || listing?.source?.empty === true) {
+      const reason = listing?.reachable === false
+        ? 'ADAPTER_UNREACHABLE'
+        : listing?.source?.empty === true
+          ? 'EMPTY_SOURCE'
+          : 'PARTIAL_READ';
+      extras.push(bareResult(name, {
         receipt: listing,
         state: 'unresolved',
-        verdict: null,
-        reasons: [listing.reachable === false ? 'ADAPTER_UNREACHABLE' : 'PARTIAL_READ'],
+        reasons: [reason],
         detail: `${name} could not fully enumerate ${scope.from} to ${scope.to}, so nothing here rules out an unclaimed run`,
-      });
+      }));
       continue;
     }
 
     for (const found of listing?.records ?? []) {
-      if (claimedRecordIds.has(`${name}:${found.id}`)) continue;
-      extras.push({
-        claim_id: null,
-        line: null,
-        actor: null,
-        kind: null,
-        adapter: name,
+      if (accounted.has(`${name}:${found.id}`)) continue;
+      extras.push(bareResult(name, {
         at: found.startedAt ?? null,
-        evidence: null,
-        receipt: { found: true, facts: found },
+        receipt: { found: true, source: listing.source, facts: found },
         state: 'contradicted',
         verdict: 'executed-never-claimed',
         reasons: ['EXECUTED_NEVER_CLAIMED'],
         detail: `${name} ran ${found.id} (${found.workflowId ?? 'unknown workflow'}) at ${found.startedAt}; no claim accounts for it`,
-      });
+      }));
     }
   }
 
