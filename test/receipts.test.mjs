@@ -340,3 +340,26 @@ test('m-6: the receipt records the since bound it ran with', async () => {
     assert.equal(JSON.parse(readFileSync(path, 'utf8')).inputs.since, '2026-09-26T10:31:00.000Z');
   });
 });
+
+test('a receipt too large to serialise refuses with something an operator can act on', async () => {
+  // The reviewer's 50MB claims file: the receipt's JSON exceeds V8's maximum string length, and the
+  // error is "Invalid string length", which tells nobody anything. The remedy is --since, so the
+  // refusal names it.
+  const { writeReceipt, ReceiptWriteError } = await import('../src/receipts.mjs');
+
+  await inTempDir(async (dir) => {
+    const huge = {
+      version: 1,
+      at: '2026-09-26T11:00:00.000Z',
+      // A value JSON.stringify cannot serialise, standing in for one too large to.
+      get results() {
+        throw new RangeError('Invalid string length');
+      },
+    };
+
+    assert.throws(
+      () => writeReceipt(dir, huge),
+      (error) => error instanceof ReceiptWriteError && /--since/.test(error.message),
+    );
+  });
+});
