@@ -284,7 +284,7 @@ test('executed-never-claimed: an enumerated run that no claim accounts for', asy
   const adapters = adapterReturning(
     'runner',
     ['executed'],
-    firesResponse({ fires: [{ executionId: 'e-1', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }] }),
+    firesResponse({ fires: [{ executionId: 'e-1', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }], covers: ['e-1'] }),
     {
       async enumerate() {
         return {
@@ -318,6 +318,27 @@ test('executed-never-claimed: an enumeration that could not complete is unresolv
 
   assert.equal(outcome.summary.executed_never_claimed, 0);
   assert.ok(outcome.results.some((result) => result.state === 'unresolved' && result.claim_id === null));
+});
+
+test('a receipt that declares no coverage accounts for nothing, which is the safe default', async () => {
+  // The core does not guess which vendor field held the record ids. A receipt that stands for
+  // several records says so in facts.covers; one that does not gets no credit.
+  const adapters = adapterReturning(
+    'runner',
+    ['executed'],
+    firesResponse({ fires: [{ executionId: 'e-1', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }] }),
+    {
+      async enumerate() {
+        return {
+          source: COMPLETE,
+          records: [{ kind: 'execution', id: 'e-1', workflowId: 'wf-201', startedAt: '2026-09-26T10:05:00.000Z', status: 'success' }],
+        };
+      },
+    },
+  );
+
+  const outcome = await resolve(executedClaim(), adapters);
+  assert.equal(outcome.summary.executed_never_claimed, 1);
 });
 
 test('an adapter with no enumerate simply never produces the second verdict', async () => {
@@ -421,4 +442,50 @@ test('strict_ok is true only when every claim matched', async () => {
   );
 
   assert.equal(outcome.strict_ok, true);
+});
+
+// --- alternative join keys -------------------------------------------------------------
+//
+// Some adapters need one of several keys rather than all of them: GitHub can answer a `pushed`
+// claim about a branch OR about a commit. A nested array inside requiredKeys means "at least
+// one of these".
+
+test('a nested requiredKeys group is satisfied by any one of its keys', async () => {
+  const adapters = {
+    vcs: {
+      name: 'vcs',
+      kinds: ['pushed'],
+      requiredKeys: { pushed: ['repo', ['branch', 'commit']] },
+      async lookup() {
+        return { found: true, source: COMPLETE, facts: { kind: 'branch', name: 'lane/x' } };
+      },
+    },
+  };
+
+  for (const key of ['branch', 'commit']) {
+    const outcome = await resolve(
+      claim({ kind: 'pushed', target: { adapter: 'vcs', repo: 'example-org/example-repo', [key]: 'value' } }),
+      adapters,
+    );
+    assert.equal(outcome.results[0].state, 'matched', key);
+  }
+});
+
+test('a nested requiredKeys group satisfied by none of its keys is unresolved, and names them all', async () => {
+  const adapters = {
+    vcs: {
+      name: 'vcs',
+      kinds: ['pushed'],
+      requiredKeys: { pushed: ['repo', ['branch', 'commit']] },
+      async lookup() {
+        return { found: true, source: COMPLETE, facts: { kind: 'branch' } };
+      },
+    },
+  };
+
+  const outcome = await resolve(claim({ kind: 'pushed', target: { adapter: 'vcs', repo: 'example-org/example-repo' } }), adapters);
+
+  assert.equal(outcome.results[0].state, 'unresolved');
+  assert.ok(outcome.results[0].reasons.includes('MALFORMED_CLAIM'));
+  assert.match(outcome.results[0].detail, /branch or commit/);
 });
