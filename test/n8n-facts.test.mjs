@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseClaims, validationReport } from '../src/claims.mjs';
+import { parseClaims } from '../src/claims.mjs';
+import { validationReport } from '../src/static-checks.mjs';
 import { reconcile } from '../src/reconcile.mjs';
 import { n8n } from '../src/adapters/n8n.mjs';
 
@@ -175,7 +176,7 @@ test('m-1: a window that is not an object, or is backwards, is also malformed', 
 });
 
 test('m-1: validate reports the same bad window, at the same line', () => {
-  const report = validationReport(JSON.stringify(executedClaim({ window: { from: 'garbage', to: 'garbage' } })));
+  const report = validationReport(JSON.stringify(executedClaim({ window: { from: 'garbage', to: 'garbage' } })), { n8n });
   assert.equal(report.problems.length, 1);
   assert.match(report.problems[0].detail, /window/);
 });

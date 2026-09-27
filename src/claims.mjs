@@ -133,15 +133,3 @@ export function parseClaims(text) {
 
   return { records };
 }
-
-// The same findings, without running any adapter. `landed validate` reads this.
-export function validationReport(text) {
-  const { records } = parseClaims(text);
-  return {
-    total: records.length,
-    valid: records.filter((record) => record.valid).length,
-    problems: records
-      .filter((record) => !record.valid)
-      .map(({ line, id, reason, detail }) => ({ line, id, reason, detail })),
-  };
-}

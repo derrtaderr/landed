@@ -7,7 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseClaims, validationReport, CLAIM_KINDS } from '../src/claims.mjs';
+import { parseClaims, CLAIM_KINDS } from '../src/claims.mjs';
+import { validationReport } from '../src/static-checks.mjs';
 
 const GOOD = {
   id: 'c-0001',
@@ -110,7 +111,10 @@ test('the same id appearing twice with DIFFERENT content is a refusal, not an ov
 });
 
 test('validationReport counts the file without consulting any adapter', () => {
-  const report = validationReport(`${JSON.stringify(GOOD)}\nnot json\n${JSON.stringify({ ...GOOD, id: 'c-2', kind: 'nope' })}`);
+  // The shared static checks live in src/static-checks.mjs and are covered there. This keeps the
+  // schema half honest, with a registry whose one adapter answers the claim's kind.
+  const registry = { github: { name: 'github', kinds: ['merged'], requiredKeys: {} } };
+  const report = validationReport(`${JSON.stringify(GOOD)}\nnot json\n${JSON.stringify({ ...GOOD, id: 'c-2', kind: 'nope' })}`, registry);
   assert.equal(report.total, 3);
   assert.equal(report.valid, 1);
   assert.equal(report.problems.length, 2);

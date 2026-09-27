@@ -4,6 +4,8 @@
 // against the claim, in one precedence order, so that every way of not knowing lands in
 // `unresolved` rather than leaking into `matched`. docs/SPEC.md §3C is the contract.
 
+import { staticProblems } from './static-checks.mjs';
+
 export const STATES = ['matched', 'contradicted', 'unresolved'];
 export const VERDICTS = ['orphaned-claim', 'executed-never-claimed'];
 
@@ -256,10 +258,6 @@ function interpret(base, claim, facts, doubleFireSeconds) {
   return matched(base, 'RECORD_EXISTS', `the authoritative system has a ${shape} for this target`);
 }
 
-// A join key is either a name the target must carry, or a nested array meaning "at least one
-// of these". GitHub answers a `pushed` claim about a branch OR about a commit, and a contract
-// that could not say so would push that choice into the adapter, where the core could no
-// longer refuse a target it cannot join.
 // The join keys, spelled out. "No record for this target" sends an operator back to the claims
 // file to work out which target; the keys are already in hand, so the detail carries them.
 function describeTarget(target) {
@@ -267,31 +265,6 @@ function describeTarget(target) {
     .filter(([key, value]) => key !== 'adapter' && key !== 'window' && key !== 'cadence' && typeof value !== 'object')
     .map(([key, value]) => `${key}=${value}`);
   return keys.length === 0 ? 'this target' : keys.join(' ');
-}
-
-// Whitespace, URL structure, a leading slash, or a parent-directory hop. Slashes and dots are fine
-// on their own: real branch names are full of them.
-const UNSAFE_VALUE = /[\s?#&%]|\.\.|^\/|\x00/;
-
-export function unsafeJoinValues(target) {
-  const offenders = [];
-  for (const [key, value] of Object.entries(target ?? {})) {
-    if (key === 'adapter' || typeof value !== 'string') continue;
-    if (UNSAFE_VALUE.test(value)) offenders.push(`${key}=${JSON.stringify(value)}`);
-  }
-  return offenders;
-}
-
-function missingJoinKeys(required, target) {
-  const missing = [];
-  for (const key of required) {
-    if (Array.isArray(key)) {
-      if (key.every((alternative) => target[alternative] === undefined)) missing.push(key.join(' or '));
-    } else if (target[key] === undefined) {
-      missing.push(key);
-    }
-  }
-  return missing;
 }
 
 async function resolveOne(record, adapters, deps, doubleFireSeconds) {
@@ -318,38 +291,12 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   const { window, source: windowSource } = effectiveWindow(claim);
   base.window = window;
   base.window_source = windowSource;
+  // Everything decidable without reading anything, from the one implementation `validate` also uses
+  // (F-08). A claim that fails here never reaches a lookup.
+  const [problem] = staticProblems(claim, adapters);
+  if (problem !== undefined) return unresolved(base, problem.reason, problem.detail);
+
   const adapter = adapters[claim.target.adapter];
-  if (adapter === undefined) {
-    return unresolved(base, 'UNKNOWN_ADAPTER', `no adapter named ${claim.target.adapter} is registered`);
-  }
-
-  if (!adapter.kinds.includes(claim.kind)) {
-    return unresolved(
-      base,
-      'KIND_NOT_SUPPORTED',
-      `the ${adapter.name} adapter answers ${adapter.kinds.join(', ')}, not ${claim.kind}`,
-    );
-  }
-
-  // A join key value ends up in a URL path, so anything that could change the request's meaning is
-  // refused before a call is made rather than escaped on the way out (m-2).
-  const unsafe = unsafeJoinValues(claim.target);
-  if (unsafe.length > 0) {
-    return unresolved(
-      base,
-      'MALFORMED_CLAIM',
-      `target value(s) ${unsafe.join(', ')} carry characters that could change the meaning of a request path`,
-    );
-  }
-
-  const missing = missingJoinKeys(adapter.requiredKeys?.[claim.kind] ?? [], claim.target);
-  if (missing.length > 0) {
-    return unresolved(
-      base,
-      'MALFORMED_CLAIM',
-      `target is missing the join key(s) ${missing.join(', ')} that ${adapter.name} needs for a ${claim.kind} claim`,
-    );
-  }
 
   // A claim that disagrees with ITSELF. An agent whose clock is behind stamps a claim about a
   // window that, by its own clock, has not happened yet; which of the two is wrong cannot be
