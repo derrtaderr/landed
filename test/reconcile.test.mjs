@@ -280,6 +280,18 @@ test('orphaned-claim: a complete read of a non-empty source with no such record'
   assert.equal(outcome.summary.orphaned_claims, 1);
 });
 
+test('an orphaned claim names the join keys that were looked for', async () => {
+  // "no record for this target" sends an operator back to the claims file to find out which
+  // target. The keys are already in hand, so the detail carries them.
+  const outcome = await resolve(
+    claim({ kind: 'pushed', target: { adapter: 'vcs', repo: 'example-org/example-repo', branch: 'lane/never-pushed' } }),
+    adapterReturning('vcs', ['pushed'], { found: false, source: COMPLETE }),
+  );
+
+  assert.match(outcome.results[0].detail, /repo=example-org\/example-repo/);
+  assert.match(outcome.results[0].detail, /branch=lane\/never-pushed/);
+});
+
 test('executed-never-claimed: an enumerated run that no claim accounts for', async () => {
   const adapters = adapterReturning(
     'runner',

@@ -55,10 +55,12 @@ function vcsAdapter(counter) {
   };
 }
 
-function inTempDir(fn) {
+// Awaited, not just called. A synchronous finally around an async body deletes the directory
+// before the test has finished using it, and the failure that produces points at the wrong file.
+async function inTempDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'landed-receipts-'));
   try {
-    return fn(dir);
+    return await fn(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
