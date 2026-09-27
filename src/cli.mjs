@@ -14,19 +14,21 @@ import { join, relative, isAbsolute } from 'node:path';
 import { adapters } from './adapters/index.mjs';
 import { ReceiptWriteError } from './receipts.mjs';
 import { parseClaims } from './claims.mjs';
-import { validationReport } from './static-checks.mjs';
+import { validationReport, staticProblems } from './static-checks.mjs';
 import { DEFAULT_DOUBLE_FIRE_SECONDS } from './reconcile.mjs';
 import { runCheck } from './run.mjs';
 import { latestReceipt, receiptFilename, receiptsDir } from './receipts.mjs';
 import { renderReceipt, renderValidation } from './report.mjs';
 import { hostDeps } from './host.mjs';
 import { runDemo } from './demo.mjs';
+import { appendClaim, generateClaimId } from './append.mjs';
 
 export const USAGE = `landed — join what an agent CLAIMED against what actually LANDED, and
 resolve every claim to matched, contradicted or unresolved.
 
 Usage:
   node bin/landed.mjs check      Reconcile a claims file and write a receipt
+  node bin/landed.mjs append     Append one validated claim, in a single atomic write
   node bin/landed.mjs validate   Check a claims file's shape, consulting no adapter
   node bin/landed.mjs report     Render the latest receipt as a table
   node bin/landed.mjs demo       Run the whole pipeline on recorded fixtures, keyless
@@ -38,6 +40,8 @@ become a different one than you typed. Write them as "--flag value", never "--fl
   check      --claims <file>, --out <dir>, --strict, --recheck,
              --n8n-executions <file>, --n8n-workflows <file>,
              --double-fire-seconds <n>, --enumerate claimed|all, --since <ISO>
+  append     --claims <file>, --actor <name>, --kind <kind>, --target <json>,
+             --id <id>, --at <ISO>, --evidence <json>
   validate   --claims <file>
   report     --out <dir>
   demo       --out <dir>
@@ -77,6 +81,15 @@ const FLAG_SPEC = {
     '--double-fire-seconds': 'value',
     '--enumerate': 'value',
     '--since': 'value',
+  },
+  append: {
+    '--claims': 'value',
+    '--id': 'value',
+    '--at': 'value',
+    '--actor': 'value',
+    '--kind': 'value',
+    '--target': 'value',
+    '--evidence': 'value',
   },
   validate: { '--claims': 'value' },
   report: { '--out': 'value' },
@@ -204,6 +217,46 @@ async function verbCheck(flags, { cwd, env, out }) {
   return exitFor(result.outcome, strict);
 }
 
+// Appending is the one write `landed` makes outside --out, and the only one that touches the
+// operator's own claims file. It validates first, so a malformed claim never enters the file.
+function verbAppend(flags, { cwd, out }) {
+  for (const required of ['--claims', '--actor', '--kind', '--target']) {
+    if (flags[required] === undefined) throw new Refusal(`append needs ${required}`);
+  }
+
+  const parseJsonFlag = (flag) => {
+    try {
+      return JSON.parse(flags[flag]);
+    } catch (error) {
+      throw new Refusal(`${flag} must be JSON: ${error.message}`);
+    }
+  };
+
+  const claim = {
+    at: flags['--at'] ?? flags.__now,
+    actor: flags['--actor'],
+    kind: flags['--kind'],
+    target: parseJsonFlag('--target'),
+  };
+  claim.id = flags['--id'] ?? generateClaimId(claim);
+  if (flags['--evidence'] !== undefined) claim.evidence = parseJsonFlag('--evidence');
+
+  const path = resolvePath(cwd, flags['--claims']);
+
+  // The static checks too, so `append` refuses exactly what `check` would call malformed (F-08).
+  const [problem] = staticProblems(claim, adapters);
+  if (problem !== undefined) throw new Refusal(problem.detail);
+
+  try {
+    appendClaim(path, claim);
+  } catch (error) {
+    throw new Refusal(error.message);
+  }
+
+  out(`appended ${claim.id} to ${shortPath(cwd, path)}`);
+  return 0;
+}
+
 function verbValidate(flags, { cwd, out }) {
   const claims = readClaims(flags, cwd);
   // The same static checks `check` runs, so the two surfaces cannot disagree (F-08).
@@ -293,6 +346,7 @@ export async function main({ argv, out = console.log, err = console.error, cwd =
     flags.__now = now();
 
     if (verb === 'check') return await verbCheck(flags, { cwd, env, out });
+    if (verb === 'append') return verbAppend(flags, { cwd, out });
     if (verb === 'validate') return verbValidate(flags, { cwd, out });
     if (verb === 'report') return verbReport(flags, { cwd, out });
     if (verb === 'demo') return await verbDemo(flags, { cwd, out });

@@ -171,6 +171,29 @@ trace, a workflow's last node.
 | `target` | yes | `adapter`, plus the join keys that adapter needs. |
 | `evidence` | no | What the agent showed as its proof. Carried into the receipt, and never treated as true. |
 
+### Who appends it, and how
+
+**The operator's hooks append the claims file, never the agent whose work is being checked.** An
+agent that writes its own claim and an agent that grades itself are the same problem one step apart.
+In practice the writer is whatever already knows the outcome: a git hook, a workflow's last node, the
+wrapper that ran the agent.
+
+Appends have to be one write. A write to a file opened `O_APPEND` is atomic up to `PIPE_BUF`, which
+POSIX guarantees to be at least 512 bytes, and only when the whole line goes out in a single call.
+Two agents that each write the JSON and then the newline can interleave and leave a line that is
+neither claim. So either your hook emits the whole line in one `write`, under 512 bytes, or it uses
+the helper:
+
+```console
+$ node bin/landed.mjs append --claims claims.jsonl \
+    --actor lane-runner --kind merged \
+    --target '{"adapter":"github","repo":"example-org/example-repo","pr":41}'
+```
+
+`append` validates the claim against exactly the checks `check` runs, so a malformed claim never
+enters the file, and it refuses a claim too long to append atomically rather than writing one that
+could tear. `--id` and `--at` are generated when you leave them out.
+
 Check the file's shape before wiring anything, and note that a malformed claim is reported rather
 than dropped:
 
