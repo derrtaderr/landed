@@ -120,7 +120,7 @@ export function renderReceipt(receipt, { receiptPath = null, strict = false, mod
     // Says what was NOT read, which is the useful half of the sentence it replaces.
     const codes = [...new Set(unread.flatMap((row) => (row.carried === true ? ['CARRIED'] : row.reasons)))].sort();
     lines.push(`  ${unread.length} of ${rows.length} rows above were not read from the system of record on this run`);
-    lines.push(`  (${codes.join(', ')}). The rest were.`);
+    lines.push(unread.length === rows.length ? `  (${codes.join(', ')}).` : `  (${codes.join(', ')}). The rest were.`);
   }
 
   return lines.join('\n');
