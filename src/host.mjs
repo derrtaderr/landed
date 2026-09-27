@@ -11,15 +11,26 @@ export function hostReadFile(path) {
 }
 
 // Never throws for a non-zero exit, because a non-zero exit is an ANSWER the adapter classifies.
-// It throws only when the binary could not be run at all.
+//
+// A FAILURE TO START is reported separately, in `spawn_error`, and that separation is ship-check
+// W-3: node puts the spawn failure's `ENOENT` in the same `code` field it uses for exit statuses, so
+// a missing binary used to read as "gh exited ENOENT" and the not-installed message never fired.
 export function hostExec(file, args) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     execFile(file, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error !== null && error.code === undefined) {
-        reject(error);
+      if (error === null) {
+        resolve({ code: 0, stdout, stderr });
         return;
       }
-      resolve({ code: error === null ? 0 : error.code, stdout, stderr });
+
+      // A process that ran and exited carries a numeric code. A process that never started carries a
+      // string errno and no exit status at all.
+      if (typeof error.code === 'number') {
+        resolve({ code: error.code, stdout, stderr });
+        return;
+      }
+
+      resolve({ code: null, spawn_error: error.code ?? 'SPAWN_FAILED', stdout, stderr });
     });
   });
 }

@@ -1,20 +1,40 @@
 {
-  "comment": "Recorded gh invocations, keyed by the arguments landed passes. Every repo, branch and sha here is invented; nothing in this file came from a real repository.",
+  "comment": "Recorded gh invocations, keyed by the arguments landed passes. Every call goes through `gh api`, because `gh api` reports an HTTP status and the higher-level verbs report English. Every repo, branch and sha here is invented; nothing came from a real repository.",
   "calls": {
-    "pr view 38 --repo example-org/example-repo --json number,state,mergedAt,mergeCommit,headRefName": {
+    "api repos/example-org/example-repo": {
       "code": 0,
-      "stdout": "{\"number\":38,\"state\":\"MERGED\",\"mergedAt\":\"2026-09-25T18:04:11Z\",\"mergeCommit\":{\"oid\":\"4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194\"},\"headRefName\":\"lane/claims-format\"}",
+      "stdout": "{\"full_name\":\"example-org/example-repo\",\"default_branch\":\"main\",\"owner\":{\"login\":\"example-org\"}}",
       "stderr": ""
     },
-    "pr view 41 --repo example-org/example-repo --json number,state,mergedAt,mergeCommit,headRefName": {
+    "api repos/example-org/example-repo/pulls/38": {
       "code": 0,
-      "stdout": "{\"number\":41,\"state\":\"OPEN\",\"mergedAt\":null,\"mergeCommit\":null,\"headRefName\":\"lane/receipt-writer\"}",
+      "stdout": "{\"number\":38,\"state\":\"closed\",\"merged\":true,\"merged_at\":\"2026-09-25T18:04:11Z\",\"merge_commit_sha\":\"4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194\",\"head\":{\"ref\":\"lane/claims-format\"}}",
+      "stderr": ""
+    },
+    "api repos/example-org/example-repo/pulls/41": {
+      "code": 0,
+      "stdout": "{\"number\":41,\"state\":\"open\",\"merged\":false,\"merged_at\":null,\"merge_commit_sha\":null,\"head\":{\"ref\":\"lane/receipt-writer\"}}",
       "stderr": ""
     },
     "api repos/example-org/example-repo/branches/lane/never-pushed": {
       "code": 1,
       "stdout": "",
       "stderr": "gh: Not Found (HTTP 404)"
+    },
+    "api repos/example-org/example-repo/pulls?state=all&head=example-org:lane/never-pushed": {
+      "code": 0,
+      "stdout": "[]",
+      "stderr": ""
+    },
+    "api repos/example-org/example-repo/branches/lane/claims-format": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "gh: Not Found (HTTP 404)"
+    },
+    "api repos/example-org/example-repo/pulls?state=all&head=example-org:lane/claims-format": {
+      "code": 0,
+      "stdout": "[{\"number\":38,\"state\":\"closed\",\"merged_at\":\"2026-09-25T18:04:11Z\",\"merge_commit_sha\":\"4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194\",\"head\":{\"ref\":\"lane/claims-format\"}}]",
+      "stderr": ""
     }
   }
 }

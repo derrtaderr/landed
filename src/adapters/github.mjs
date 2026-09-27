@@ -1,17 +1,19 @@
 // The GitHub adapter.
 //
-// It shells out to `gh`, already authenticated on the operator's machine, so no token lives in
-// this repo and none reaches a receipt. Every way that binary can end is classified before any
-// answer is given, because three of the four look exactly like "no such record" and only one of
-// them is one:
+// It shells out to `gh`, which is already authenticated on the operator's machine, so no token lives
+// in this repo and none reaches a receipt. Every call goes through `gh api`, because `gh api` reports
+// an HTTP STATUS and the higher-level verbs report English.
 //
-//   gh is not installed      -> unreachable
-//   gh is not authenticated  -> unreachable
-//   the API rate limited it  -> an incomplete read, which the core resolves to unresolved
-//   the API answered 404     -> a genuine absence, and the only one of the four
+// Two rules, both of them ship-check scars:
 //
-// This is the vault's own dogfood. Lane records claiming "PR opened", "merged" and "pushed" are
-// exactly the claims joined here.
+//   F-05  A FAILURE is classified from the spawn error, the exit code and the HTTP status in stderr.
+//         Never from a body. The old code scanned stdout too, so a successful `compare` whose 250
+//         commit messages happened to contain "Not Found" became a false absence on ordinary
+//         repositories.
+//   F-06  A 404 is an absence only when the CONTAINER is proven present. GitHub answers 404 for a
+//         repo that does not exist, for a private repo the token cannot see, and for a branch
+//         deleted at merge, which is the normal end of a healthy `pushed` claim. So a 404 on
+//         anything inside a repo triggers a read of the repo itself before anything is concluded.
 
 const KINDS = ['merged', 'pushed', 'created'];
 
@@ -21,46 +23,50 @@ function unreachable(reason) {
   return { reachable: false, reason };
 }
 
-// A read that could not be completed. `found: false` with `complete: false` is how the core is
-// told that neither presence nor absence was established.
+// A read that could not be completed. `found: false` with `complete: false` tells the core that
+// neither presence nor absence was established.
 function incomplete(reason) {
   return { found: false, source: { complete: false, empty: false, reason } };
 }
 
-function classify(result) {
-  const noise = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+// The HTTP status of a FAILED gh call, from gh's own error line on stderr. gh writes
+// "gh: <message> (HTTP 404)". The body, which lives on stdout, is never consulted here.
+function statusOf(result) {
+  const match = /\(HTTP (\d{3})\)/.exec(result.stderr ?? '');
+  return match === null ? null : Number(match[1]);
+}
 
-  if (result.code === 127 || /command not found|ENOENT|not recognized/i.test(noise)) {
+// What a gh call turned into, decided from the spawn error, the exit code and the HTTP status. In
+// that order, and from nothing else.
+function classify(result) {
+  if (result.spawn_error === 'ENOENT') {
     return { kind: 'unreachable', reason: 'the gh CLI is not installed on this machine' };
   }
-  if (/gh auth login|Bad credentials|HTTP 401|authentication/i.test(noise)) {
-    return { kind: 'unreachable', reason: 'the gh CLI is not authenticated (run gh auth login)' };
+  if (result.spawn_error !== undefined && result.spawn_error !== null) {
+    return { kind: 'unreachable', reason: `gh could not be started: ${result.spawn_error}` };
   }
-  if (/rate limit|secondary rate/i.test(noise)) {
-    return { kind: 'incomplete', reason: 'the GitHub API rate limited this read' };
+  if (result.code === 0) return { kind: 'ok', reason: null };
+
+  const status = statusOf(result);
+
+  if (status === 401) return { kind: 'unreachable', reason: 'the gh CLI is not authenticated (run gh auth login)' };
+  if (status === 403) {
+    // 403 covers a rate limit, a SAML-protected org and a token without the scope. None of them is
+    // an absence, and none of them is something this tool can tell apart from here.
+    return { kind: 'unreachable', reason: 'GitHub answered 403: rate limited, or this token may not read that repository' };
   }
-  if (/HTTP 404|Not Found|Could not resolve to|no pull requests found/i.test(noise)) {
-    return { kind: 'absent', reason: 'the GitHub API answered 404' };
-  }
-  if (result.code !== 0) {
-    return {
-      kind: 'unreachable',
-      reason: `gh exited ${result.code}: ${(result.stderr ?? '').trim().split('\n')[0]}`,
-    };
-  }
-  return { kind: 'ok', reason: null };
+  if (status === 429) return { kind: 'incomplete', reason: 'GitHub answered 429: this read was rate limited' };
+  if (status === 404) return { kind: 'absent', reason: 'GitHub answered 404' };
+  if (status !== null) return { kind: 'unreachable', reason: `GitHub answered ${status}` };
+
+  if (result.code === 127) return { kind: 'unreachable', reason: 'the gh CLI is not installed on this machine' };
+  return { kind: 'unreachable', reason: `gh exited ${result.code} without an HTTP status` };
 }
 
-function fromOutcome(outcome) {
-  if (outcome.kind === 'unreachable') return unreachable(outcome.reason);
-  if (outcome.kind === 'incomplete') return incomplete(outcome.reason);
-  return { found: false, source: COMPLETE };
-}
-
-async function gh(args, deps) {
+async function api(path, deps) {
   let result;
   try {
-    result = await deps.exec('gh', args);
+    result = await deps.exec('gh', ['api', path]);
   } catch (error) {
     return { outcome: { kind: 'unreachable', reason: `gh could not be run: ${error.message}` } };
   }
@@ -75,12 +81,37 @@ async function gh(args, deps) {
   }
 }
 
+function fromOutcome(outcome) {
+  if (outcome.kind === 'unreachable') return unreachable(outcome.reason);
+  if (outcome.kind === 'incomplete') return incomplete(outcome.reason);
+  return { found: false, source: COMPLETE };
+}
+
+// Is the repository itself readable? Until this answers yes, a 404 on anything inside it proves
+// nothing at all. Decision D3.
+async function proveRepo(repo, deps) {
+  const { outcome, json } = await api(`repos/${repo}`, deps);
+
+  if (outcome.kind === 'ok') return { present: true, repo: json };
+  if (outcome.kind === 'absent') {
+    return {
+      present: false,
+      receipt: unreachable(`the repository ${repo} answered 404: it does not exist, or this token cannot see it. A 404 inside a repository proves nothing until the repository itself is readable`),
+    };
+  }
+  return { present: false, receipt: fromOutcome(outcome) };
+}
+
 async function lookupPr(target, deps) {
-  const { outcome, json } = await gh(
-    ['pr', 'view', String(target.pr), '--repo', target.repo, '--json', 'number,state,mergedAt,mergeCommit,headRefName'],
-    deps,
-  );
+  const { outcome, json } = await api(`repos/${target.repo}/pulls/${target.pr}`, deps);
+
+  if (outcome.kind === 'absent') {
+    const container = await proveRepo(target.repo, deps);
+    return container.present ? { found: false, source: COMPLETE } : container.receipt;
+  }
   if (outcome.kind !== 'ok') return fromOutcome(outcome);
+
+  const state = json.merged === true || json.merged_at !== null ? 'MERGED' : String(json.state ?? '').toUpperCase();
 
   return {
     found: true,
@@ -89,34 +120,70 @@ async function lookupPr(target, deps) {
       kind: 'pull_request',
       repo: target.repo,
       number: json.number,
-      state: json.state,
-      merged_at: json.mergedAt ?? null,
-      merge_commit: json.mergeCommit?.oid ?? null,
-      head_ref: json.headRefName ?? null,
+      state,
+      merged_at: json.merged_at ?? null,
+      merge_commit: json.merge_commit_sha ?? null,
+      head_ref: json.head?.ref ?? null,
     },
   };
 }
 
+// A branch that is gone is not evidence a push never happened: at merge, GitHub deletes it. So an
+// absent branch asks whether a PR from it was merged, and reports the merge as the record.
 async function lookupBranch(target, deps) {
-  const { outcome, json } = await gh(['api', `repos/${target.repo}/branches/${target.branch}`], deps);
-  if (outcome.kind !== 'ok') return fromOutcome(outcome);
+  const { outcome, json } = await api(`repos/${target.repo}/branches/${target.branch}`, deps);
+
+  if (outcome.kind === 'ok') {
+    return {
+      found: true,
+      source: COMPLETE,
+      facts: { kind: 'branch', repo: target.repo, name: json.name, present: true, commit: json.commit?.sha ?? null },
+    };
+  }
+  if (outcome.kind !== 'absent') return fromOutcome(outcome);
+
+  const container = await proveRepo(target.repo, deps);
+  if (!container.present) return container.receipt;
+
+  const owner = container.repo?.owner?.login ?? String(target.repo).split('/')[0];
+  const pulls = await api(`repos/${target.repo}/pulls?state=all&head=${owner}:${target.branch}`, deps);
+  if (pulls.outcome.kind === 'unreachable' || pulls.outcome.kind === 'incomplete') return fromOutcome(pulls.outcome);
+
+  const merged = (Array.isArray(pulls.json) ? pulls.json : []).find(
+    (pull) => pull.merged_at !== null && pull.merged_at !== undefined && pull.head?.ref === target.branch,
+  );
+
+  if (merged === undefined) return { found: false, source: COMPLETE };
 
   return {
     found: true,
     source: COMPLETE,
-    facts: { kind: 'branch', repo: target.repo, name: json.name, commit: json.commit?.sha ?? null },
+    facts: {
+      kind: 'branch',
+      repo: target.repo,
+      name: target.branch,
+      // The branch is gone AND a PR from it was merged. The merge is the record that the push
+      // happened; the deletion is what GitHub does afterwards.
+      present: false,
+      merged_in_pr: merged.number,
+      commit: merged.merge_commit_sha ?? null,
+      merged_at: merged.merged_at,
+    },
   };
 }
 
 async function lookupCommit(target, deps) {
-  const repo = await gh(['api', `repos/${target.repo}`], deps);
-  if (repo.outcome.kind !== 'ok') return fromOutcome(repo.outcome);
-  const defaultBranch = repo.json.default_branch;
+  // The repo read is the container proof AND the source of the default branch, in one call.
+  const container = await proveRepo(target.repo, deps);
+  if (!container.present) return container.receipt;
 
-  // `compare` answers containment in one call. "identical" is the same commit and "behind" means
-  // the default branch has moved past it; both mean contained. "ahead" and "diverged" mean it is
-  // not on the default branch, which contradicts a pushed claim rather than being absent.
-  const compare = await gh(['api', `repos/${target.repo}/compare/${defaultBranch}...${target.commit}`], deps);
+  const defaultBranch = container.repo.default_branch;
+
+  // `compare` answers containment in one call. "identical" is the same commit and "behind" means the
+  // default branch has moved past it; both mean contained. "ahead" and "diverged" mean it is not on
+  // the default branch, which contradicts a pushed claim rather than being absent.
+  const compare = await api(`repos/${target.repo}/compare/${defaultBranch}...${target.commit}`, deps);
+  if (compare.outcome.kind === 'absent') return { found: false, source: COMPLETE };
   if (compare.outcome.kind !== 'ok') return fromOutcome(compare.outcome);
 
   return {
@@ -144,6 +211,10 @@ export const github = {
     pushed: ['repo', ['branch', 'commit']],
   },
 
+  // No enumerate in phase 1. "Everything that happened in this repo" is a different shape of
+  // question, and an adapter without enumerate simply never produces the executed-never-claimed
+  // verdict. That is the honest outcome rather than a zero nobody can trust.
+
   async lookup(target, deps) {
     if (typeof deps.exec !== 'function') return unreachable('no way to run gh was provided');
     if (target.repo === undefined) return unreachable('target.repo is required for any GitHub lookup');
@@ -154,8 +225,4 @@ export const github = {
 
     return unreachable('a GitHub target needs a pr, a branch or a commit');
   },
-
-  // No enumerate in phase 1. "Everything that happened in this repo" is a different shape of
-  // question, and an adapter without enumerate simply never produces the executed-never-claimed
-  // verdict. That is the honest outcome rather than a zero nobody can trust.
 };
