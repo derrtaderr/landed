@@ -1,0 +1,12 @@
+{
+  "data": [
+    { "id": "wf-201", "name": "Nightly lead digest", "active": true },
+    { "id": "wf-202", "name": "Refund claim drafter", "active": false },
+    { "id": "wf-203", "name": "Webhook fan-out", "active": true },
+    { "id": "wf-204", "name": "Invoice reconciler", "active": true },
+    { "id": "wf-206", "name": "Ad-hoc warehouse export", "active": true },
+    { "id": "wf-207", "name": "Hourly CRM sync", "active": true },
+    { "id": "wf-208", "name": "Digest mailer", "active": true }
+  ],
+  "nextCursor": null
+}

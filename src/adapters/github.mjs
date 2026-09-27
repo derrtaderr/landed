@@ -1,18 +1,21 @@
 // The GitHub adapter.
 //
-// It shells out to `gh`, which is already authenticated on the operator's machine, so there is
-// no token in this repo and none in a receipt. Every failure mode of that binary is classified
-// before any answer is given, because the three that matter all LOOK like "no such record":
+// It shells out to `gh`, already authenticated on the operator's machine, so no token lives in
+// this repo and none reaches a receipt. Every way that binary can end is classified before any
+// answer is given, because three of the four look exactly like "no such record" and only one of
+// them is one:
 //
-//   gh is not installed        -> unreachable
-//   gh is not authenticated    -> unreachable
-//   gh is rate limited         -> an incomplete read, which the core turns into unresolved
-//   the API answered 404       -> a genuine absence, and the only one of the four that is
+//   gh is not installed      -> unreachable
+//   gh is not authenticated  -> unreachable
+//   the API rate limited it  -> an incomplete read, which the core resolves to unresolved
+//   the API answered 404     -> a genuine absence, and the only one of the four
 //
-// This is the vault's own dogfood: lane records claiming "PR opened", "merged" and "pushed" are
+// This is the vault's own dogfood. Lane records claiming "PR opened", "merged" and "pushed" are
 // exactly the claims joined here.
 
 const KINDS = ['merged', 'pushed', 'created'];
+
+const COMPLETE = { complete: true, empty: false };
 
 function unreachable(reason) {
   return { reachable: false, reason };
@@ -24,27 +27,34 @@ function incomplete(reason) {
   return { found: false, source: { complete: false, empty: false, reason } };
 }
 
-const COMPLETE = { complete: true, empty: false };
-
 function classify(result) {
   const noise = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
 
   if (result.code === 127 || /command not found|ENOENT|not recognized/i.test(noise)) {
     return { kind: 'unreachable', reason: 'the gh CLI is not installed on this machine' };
   }
-  if (/gh auth login|authentication|Bad credentials|HTTP 401/i.test(noise)) {
+  if (/gh auth login|Bad credentials|HTTP 401|authentication/i.test(noise)) {
     return { kind: 'unreachable', reason: 'the gh CLI is not authenticated (run gh auth login)' };
   }
-  if (/rate limit|API rate limit exceeded|secondary rate/i.test(noise)) {
+  if (/rate limit|secondary rate/i.test(noise)) {
     return { kind: 'incomplete', reason: 'the GitHub API rate limited this read' };
   }
-  if (/HTTP 404|Not Found|Could not resolve to|no pull requests found|no.*PullRequest/i.test(noise)) {
+  if (/HTTP 404|Not Found|Could not resolve to|no pull requests found/i.test(noise)) {
     return { kind: 'absent', reason: 'the GitHub API answered 404' };
   }
   if (result.code !== 0) {
-    return { kind: 'unreachable', reason: `gh exited ${result.code}: ${(result.stderr ?? '').trim().split('\n')[0]}` };
+    return {
+      kind: 'unreachable',
+      reason: `gh exited ${result.code}: ${(result.stderr ?? '').trim().split('\n')[0]}`,
+    };
   }
   return { kind: 'ok', reason: null };
+}
+
+function fromOutcome(outcome) {
+  if (outcome.kind === 'unreachable') return unreachable(outcome.reason);
+  if (outcome.kind === 'incomplete') return incomplete(outcome.reason);
+  return { found: false, source: COMPLETE };
 }
 
 async function gh(args, deps) {
@@ -63,12 +73,6 @@ async function gh(args, deps) {
   } catch (error) {
     return { outcome: { kind: 'unreachable', reason: `gh returned output that is not JSON: ${error.message}` } };
   }
-}
-
-function fromOutcome(outcome) {
-  if (outcome.kind === 'unreachable') return unreachable(outcome.reason);
-  if (outcome.kind === 'incomplete') return incomplete(outcome.reason);
-  return { found: false, source: COMPLETE };
 }
 
 async function lookupPr(target, deps) {
@@ -109,9 +113,9 @@ async function lookupCommit(target, deps) {
   if (repo.outcome.kind !== 'ok') return fromOutcome(repo.outcome);
   const defaultBranch = repo.json.default_branch;
 
-  // `compare` answers containment in one call. "identical" means the same commit and "behind"
-  // means the default branch has moved past it; both mean contained. "ahead" and "diverged"
-  // mean it is not on the default branch, which is a real contradiction of a "pushed" claim.
+  // `compare` answers containment in one call. "identical" is the same commit and "behind" means
+  // the default branch has moved past it; both mean contained. "ahead" and "diverged" mean it is
+  // not on the default branch, which contradicts a pushed claim rather than being absent.
   const compare = await gh(['api', `repos/${target.repo}/compare/${defaultBranch}...${target.commit}`], deps);
   if (compare.outcome.kind !== 'ok') return fromOutcome(compare.outcome);
 
@@ -136,7 +140,7 @@ export const github = {
   requiredKeys: {
     merged: ['repo', 'pr'],
     created: ['repo', 'pr'],
-    // Either key answers a pushed claim, and neither one alone is required.
+    // Either key answers a pushed claim, and neither alone is required.
     pushed: ['repo', ['branch', 'commit']],
   },
 
@@ -151,8 +155,7 @@ export const github = {
     return unreachable('a GitHub target needs a pr, a branch or a commit');
   },
 
-  // No enumerate in phase 1. Enumerating "everything that happened in this repo" is a
-  // different shape of question from the ones above, and an adapter without enumerate simply
-  // never produces the executed-never-claimed verdict. That is the honest outcome rather than a
-  // zero nobody can trust.
+  // No enumerate in phase 1. "Everything that happened in this repo" is a different shape of
+  // question, and an adapter without enumerate simply never produces the executed-never-claimed
+  // verdict. That is the honest outcome rather than a zero nobody can trust.
 };
