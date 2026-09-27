@@ -163,6 +163,10 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
     kind: record.claim?.kind ?? null,
     adapter: record.claim?.target?.adapter ?? null,
     at: record.claim?.at ?? null,
+    // The window this claim asked about, kept on the result so that a run which CARRIES this
+    // claim forward can still derive the enumeration scope from it. Without it, the second run
+    // enumerates nothing and every unclaimed record silently stops being reported.
+    window: record.claim?.target?.window ?? null,
     evidence: record.claim?.evidence ?? null,
     receipt: null,
   };
@@ -251,6 +255,7 @@ function bareResult(adapter, fields) {
     kind: null,
     adapter,
     at: null,
+    window: null,
     evidence: null,
     receipt: null,
     verdict: null,
@@ -333,8 +338,24 @@ async function findUnclaimed(records, adapters, deps, results) {
   return extras;
 }
 
-export async function reconcile({ records, adapters, deps = {}, doubleFireSeconds = DEFAULT_DOUBLE_FIRE_SECONDS }) {
-  if (records.length === 0) {
+// A carried result stands in for the claim that produced it, so the enumeration scope still
+// covers the window that claim asked about.
+function carriedRecords(carried) {
+  return carried
+    .filter((result) => result.window !== null && result.window !== undefined)
+    .map((result) => ({ valid: true, claim: { target: { adapter: result.adapter, window: result.window } } }));
+}
+
+export async function reconcile({
+  records,
+  adapters,
+  deps = {},
+  doubleFireSeconds = DEFAULT_DOUBLE_FIRE_SECONDS,
+  // Results settled by an earlier run. They are not re-looked-up, and they are here rather than
+  // simply omitted because their receipts still account for the records they covered.
+  carried = [],
+}) {
+  if (records.length === 0 && carried.length === 0) {
     return {
       refusal: {
         reason: 'EMPTY_CLAIMS',
@@ -346,12 +367,13 @@ export async function reconcile({ records, adapters, deps = {}, doubleFireSecond
     };
   }
 
-  const results = [];
+  const results = [...carried];
   for (const record of records) {
-    results.push(await resolveOne(record, adapters, deps, doubleFireSeconds));
+    results.push({ ...(await resolveOne(record, adapters, deps, doubleFireSeconds)), carried: false });
   }
+  results.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
 
-  const extras = await findUnclaimed(records, adapters, deps, results);
+  const extras = await findUnclaimed([...records, ...carriedRecords(carried)], adapters, deps, results);
   const all = [...results, ...extras];
 
   return { refusal: null, results: all, summary: summarize(all), strict_ok: strictOk(all) };
@@ -361,6 +383,9 @@ function summarize(results) {
   return {
     total: results.length,
     matched: results.filter((result) => result.state === 'matched').length,
+    // What this run learned that an earlier one had not already settled. An hourly cron whose
+    // summary restates every agreement it has ever reached is a summary nobody reads.
+    new_findings: results.filter((result) => result.carried !== true).length,
     contradicted: results.filter((result) => result.state === 'contradicted').length,
     unresolved: results.filter((result) => result.state === 'unresolved').length,
     orphaned_claims: results.filter((result) => result.verdict === 'orphaned-claim').length,
