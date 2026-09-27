@@ -16,6 +16,8 @@ function plural(count, one, many = `${one}s`) {
 }
 
 export function summaryLines(summary) {
+  // Claims first, and unclaimed runs on their own line. The old header counted an unclaimed run as a
+  // contradicted claim, which is the arithmetic D2 exists to undo.
   const lines = [
     `  ${plural(summary.contradicted, 'contradicted claim')}`,
     `  ${plural(summary.unresolved, 'unresolved claim')}`,
@@ -37,7 +39,22 @@ export function oneLine(summary) {
   return `${summary.contradicted} contradicted, ${summary.unresolved} unresolved, ${summary.matched} matched, out of ${plural(summary.total, 'joined record')}`;
 }
 
-export function renderReceipt(receipt, { receiptPath = null } = {}) {
+// Was this row's verdict read from a reachable source, on THIS run?
+//
+// Ship-check W-1: the trust line was printed unconditionally, including after a run where every row
+// was ADAPTER_UNREACHABLE, after `report` (which reads nothing), and beside a row carried from an
+// earlier run and deliberately not re-read. A product's one trust sentence has to be the one claim
+// in it that is always true.
+function wasRead(row) {
+  if (row.carried === true) return false;
+  const receipt = row.receipt;
+  if (receipt === null || receipt === undefined) return false;
+  if (receipt.reachable === false) return false;
+  if (receipt.source?.complete === false) return false;
+  return true;
+}
+
+export function renderReceipt(receipt, { receiptPath = null, strict = false, mode = 'check' } = {}) {
   const lines = [`landed ${receipt.at}`, ''];
   lines.push(...summaryLines(receipt.summary), '');
 
@@ -45,14 +62,16 @@ export function renderReceipt(receipt, { receiptPath = null } = {}) {
     (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || (a.line ?? 1e9) - (b.line ?? 1e9),
   );
 
-  for (const row of rows) {
-    const id = row.claim_id ?? '(unclaimed)';
-    const flag = row.carried === true ? ' carried' : '';
-    // The named verdict is printed beside the reason, because "orphaned-claim" and
-    // "executed-never-claimed" are the two findings an operator hunts for by name.
-    const verdict = row.verdict === null || row.verdict === undefined ? '' : ` [${row.verdict}]`;
-    lines.push(`  ${pad(id, 12)}${pad(row.state, 14)}${pad(row.adapter ?? '-', 8)}${row.reasons.join(', ')}${verdict}${flag}`);
-    lines.push(`      ${row.detail}`);
+  const claims = rows.filter((row) => row.state !== 'unclaimed');
+  const unclaimed = rows.filter((row) => row.state === 'unclaimed');
+
+  for (const row of claims) lines.push(...rowLines(row));
+
+  // Its own section, because an unclaimed run answers no claim and reading it in the same list as
+  // the claims is what made the old header count it as a contradicted claim (m-7, D2).
+  if (unclaimed.length > 0) {
+    lines.push('', `  unclaimed runs (${unclaimed.length}) — records the authoritative system holds that no claim accounts for`);
+    for (const row of unclaimed) lines.push(...rowLines(row));
   }
 
   lines.push('');
@@ -61,23 +80,53 @@ export function renderReceipt(receipt, { receiptPath = null } = {}) {
 
   const news = receipt.summary.new_findings ?? receipt.summary.total;
   const carried = receipt.summary.total - news;
-  if (carried > 0) lines.push(`  ${plural(carried, 'claim')} carried from an earlier run and not re-read. Use --recheck to re-verify.`);
+  if (carried > 0) lines.push(`  ${plural(carried, 'row')} carried from an earlier run and not re-read. Use --recheck to re-verify.`);
 
   lines.push('');
 
-  // A run that could not read the authoritative side at all is not a quiet run. Without this line
-  // an hourly check that lost its credential looks exactly like an hourly check with nothing to
-  // report, and the exit code only says so under --strict.
-  if (receipt.summary.total > 0 && receipt.summary.matched === 0 && receipt.summary.contradicted === 0) {
+  // A run that could not read the authoritative side at all is not a quiet run.
+  if (receipt.summary.claims > 0 && receipt.summary.matched === 0 && receipt.summary.contradicted === 0) {
     lines.push('  This run resolved nothing. Every claim is unresolved, which means the authoritative');
-    lines.push('  side was not read rather than that your systems agree. Run with --strict to make');
-    lines.push('  that a non-zero exit.');
+    lines.push(strict
+      ? '  side was not read rather than that your systems agree. This run exits 3.'
+      : '  side was not read rather than that your systems agree. Run with --strict to make that a');
+    if (!strict) lines.push('  non-zero exit.');
     lines.push('');
   }
 
-  lines.push('  Every line above was read from the system of record, not from what an agent said.');
+  if (mode === 'demo') {
+    lines.push('  This is the recorded demo corpus, so it disagrees on purpose and still exits 0.');
+    lines.push('  A non-zero demo would read as a broken install rather than as a working tool.');
+    lines.push('');
+  }
+
+  const unread = rows.filter((row) => !wasRead(row));
+
+  if (mode === 'report') {
+    lines.push(`  Rendered from the stored receipt for ${receipt.at}. Nothing was read for this table;`);
+    lines.push('  run check to reconcile again.');
+  } else if (unread.length === 0) {
+    lines.push('  Every line above was read from the system of record, not from what an agent said.');
+  } else {
+    // Says what was NOT read, which is the useful half of the sentence it replaces.
+    const codes = [...new Set(unread.flatMap((row) => (row.carried === true ? ['CARRIED'] : row.reasons)))].sort();
+    lines.push(`  ${unread.length} of ${rows.length} rows above were not read from the system of record on this run`);
+    lines.push(`  (${codes.join(', ')}). The rest were.`);
+  }
 
   return lines.join('\n');
+}
+
+function rowLines(row) {
+  const id = row.claim_id ?? '(unclaimed)';
+  const flag = row.carried === true ? ' carried' : '';
+  // The named verdict is printed beside the reason, because "orphaned-claim" and
+  // "executed-never-claimed" are the two findings an operator hunts for by name.
+  const verdict = row.verdict === null || row.verdict === undefined ? '' : ` [${row.verdict}]`;
+  return [
+    `  ${pad(id, 12)}${pad(row.state, 14)}${pad(row.adapter ?? '-', 8)}${row.reasons.join(', ')}${verdict}${flag}`,
+    `      ${row.detail}`,
+  ];
 }
 
 export function renderValidation(report, { path }) {

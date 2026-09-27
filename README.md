@@ -87,6 +87,8 @@ landed 2026-09-26T11:00:00.000Z
       example-org/example-repo#38 is merged at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
   c-13        matched       github  MERGED_AND_BRANCH_DELETED
       lane/claims-format is gone from the remote because PR #38 merged it at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
+
+  unclaimed runs (2) — records the authoritative system holds that no claim accounts for
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-1001 (wf-201) at 2026-09-26T09:58:00.000Z; no claim accounts for it
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
@@ -95,7 +97,11 @@ landed 2026-09-26T11:00:00.000Z
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json
   7 contradicted, 4 unresolved, 3 matched, out of 16 joined records
 
-  Every line above was read from the system of record, not from what an agent said.
+  This is the recorded demo corpus, so it disagrees on purpose and still exits 0.
+  A non-zero demo would read as a broken install rather than as a working tool.
+
+  4 of 16 rows above were not read from the system of record on this run
+  (CLOCK_SKEW, ENUMERATION_SUPPRESSED, MALFORMED_CLAIM, UNKNOWN_ADAPTER). The rest were.
 ```
 
 Twelve claims went in. Some agreed, some disagreed, some could not be decided, and one row has no
