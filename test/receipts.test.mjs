@@ -7,7 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -263,4 +263,80 @@ test('an empty claims file writes no receipt and refuses', async () => {
 test('reading receipts from a directory that does not exist is empty, not a crash', () => {
   assert.deepEqual(readReceipts(join(tmpdir(), 'landed-does-not-exist-9f3a')), []);
   assert.equal(latestReceipt(join(tmpdir(), 'landed-does-not-exist-9f3a')), null);
+});
+
+// --- m-6: the settled index, and --since ----------------------------------------------------
+//
+// Ship-check measured a 50MB claims file producing a 482MB receipt set, then 11 seconds and 2.8GB
+// RSS on the next run, all of it re-parsing history. A run now reads one small index instead.
+
+test('m-6: a run writes a settled index beside the receipts, not inside them', async () => {
+  await inTempDir(async (dir) => {
+    await check(dir);
+
+    const index = JSON.parse(readFileSync(join(dir, 'settled.json'), 'utf8'));
+    assert.equal(index.version, 1);
+    assert.ok(Object.keys(index.claims).includes('c-1'), 'the matched claim is in it');
+    assert.ok(!Object.keys(index.claims).includes('c-2'), 'the contradicted one is not');
+    assert.ok(!readdirSync(join(dir, 'receipts')).includes('settled.json'));
+  });
+});
+
+test('m-6: the second run reads the index, not every receipt ever written', async () => {
+  await inTempDir(async (dir) => {
+    await check(dir);
+
+    // Remove the history. If the second run still carries c-1 forward, it read the index.
+    rmSync(join(dir, 'receipts'), { recursive: true, force: true });
+
+    const second = await check(dir, { at: '2026-09-26T12:00:00.000Z' });
+    const carried = second.outcome.results.find((result) => result.claim_id === 'c-1');
+
+    assert.equal(carried.carried, true);
+    assert.deepEqual(second.calls, [41], 'and it still skipped the lookup');
+  });
+});
+
+test('m-6: a lost index is rebuilt from the receipts rather than losing what was settled', async () => {
+  await inTempDir(async (dir) => {
+    await check(dir);
+    rmSync(join(dir, 'settled.json'), { force: true });
+
+    const second = await check(dir, { at: '2026-09-26T12:00:00.000Z' });
+    assert.equal(second.outcome.results.find((result) => result.claim_id === 'c-1').carried, true);
+  });
+});
+
+test('m-6: a corrupt index is rebuilt rather than being fatal', async () => {
+  await inTempDir(async (dir) => {
+    await check(dir);
+    writeFileSync(join(dir, 'settled.json'), '{ this is not json');
+
+    const second = await check(dir, { at: '2026-09-26T12:00:00.000Z' });
+    assert.equal(second.outcome.results.find((result) => result.claim_id === 'c-1').carried, true);
+  });
+});
+
+test('m-6: --since skips claims older than the instant given', async () => {
+  await inTempDir(async (dir) => {
+    const outcome = await check(dir, { since: '2026-09-26T10:31:00.000Z' });
+
+    // c-1 is dated 10:30 and c-2 is dated 10:31.
+    assert.deepEqual(outcome.outcome.results.map((result) => result.claim_id), ['c-2']);
+  });
+});
+
+test('m-6: --since keeps a malformed line, because its instant cannot be trusted to exclude it', async () => {
+  await inTempDir(async (dir) => {
+    const outcome = await check(dir, { claims: `not json\n${CLAIMS}`, since: '2026-09-26T10:31:00.000Z' });
+
+    assert.ok(outcome.outcome.results.some((result) => result.reasons.includes('MALFORMED_CLAIM')));
+  });
+});
+
+test('m-6: the receipt records the since bound it ran with', async () => {
+  await inTempDir(async (dir) => {
+    const { path } = await check(dir, { since: '2026-09-26T10:31:00.000Z' });
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).inputs.since, '2026-09-26T10:31:00.000Z');
+  });
 });

@@ -131,9 +131,19 @@ What the corpus is showing you, case by case:
 | `contradicted` | Both records were read, and they disagree. |
 | `unresolved` | The join could not be made. Everything unknown lands here. |
 
-Plus two named verdicts, which are contradictions with a name worth grepping for:
-`orphaned-claim` (claimed, and a complete read of a non-empty source has no such record) and
-`executed-never-claimed` (a record the adapter enumerated that no claim covers).
+Plus one row class that is not a claim state at all: **`unclaimed`**, for a record the authoritative
+system holds that no claim accounts for. It is reported in its own section, it is carried once
+reported so it never alarms twice, and it does not set the exit code, because nobody claimed it and so
+no claim is wrong.
+
+And two named verdicts, worth grepping for by name: `orphaned-claim` (claimed, and a complete read of
+a non-empty source, inside a container proven present, has no such record) and
+`executed-never-claimed` (the verdict on an `unclaimed` row).
+
+**A claim is graded on its KIND, and nothing else.** A `completed` claim is answered by an execution's
+status; a `merged` claim by a pull request's state. Handed a receipt of a shape its kind cannot read,
+a claim resolves `unresolved`, because grading it on whatever field happened to be present is how a
+reconciler reports `matched` beside an `error`.
 
 **`unresolved` is the load-bearing state.** A reconciler that cannot say "I could not tell" will
 eventually say "it landed" about something it never looked at. These five states each resolve to
@@ -146,6 +156,11 @@ eventually say "it landed" about something it never looked at. These five states
 | The adapter could not be read | `ADAPTER_UNREACHABLE` |
 | The read was truncated or rate limited | `PARTIAL_READ` |
 | The claim is dated outside the window it reports on, or outside a bounded read | `CLOCK_SKEW` |
+| The workflows export does not say whether a workflow was active | `ACTIVE_FLAG_UNKNOWN` |
+| The repository itself cannot be read, so a 404 inside it proves nothing | `REPO_UNREACHABLE` |
+| The receipt is of a shape this claim's kind cannot be graded against | `RECEIPT_SHAPE_MISMATCH` |
+| An execution has not finished yet | `STILL_RUNNING` |
+| A subject whose own claim could not be resolved, so its runs cannot be attributed | `ENUMERATION_SUPPRESSED` |
 
 The second one is the one that looks most like good news. Zero executions in an export is
 indistinguishable from a failed export, so an absence is only evidence when the source returned
@@ -221,8 +236,14 @@ $ node bin/landed.mjs check --claims claims.jsonl --out landed \
     --n8n-workflows exports/workflows.json
 ```
 
-`node bin/landed.mjs report --out landed` re-renders the newest receipt without re-reading
-anything, which is what you want at 9am when the run happened at 3am.
+`node bin/landed.mjs report --out landed` re-renders the newest receipt without re-reading anything,
+which is what you want at 9am when the run happened at 3am. It says so in its own output, because a
+table that reads nothing must not print a line claiming it did.
+
+Two flags worth knowing on a long-lived claims file. `--enumerate all` widens the unclaimed-run search
+past the workflows your claims name, which is off by default so that one claim on a busy instance does
+not drag every other workflow into the report. `--since <ISO>` bounds how far back the claims file is
+read, which keeps an append-only file from growing the work of every run forever.
 
 ### Exit codes, because this is built for cron
 
@@ -243,7 +264,7 @@ claimed them and so no claim is wrong.
 `demo` always exits 0. Its corpus contains contradictions on purpose, so a non-zero demo would
 read as a broken install rather than as a working one.
 
-### Receipts, and what a second run does
+### Receipts, the settled index, and what a second run does
 
 Every run writes `<out>/receipts/<instant>.json`: the verdict per claim AND the adapter response
 that produced it, so any verdict can be re-derived rather than believed. The run's inputs are
@@ -251,8 +272,13 @@ stored too, with every credential-shaped key stripped.
 
 A claim that `matched` in an earlier receipt is carried forward on the next run and not looked up
 again, so an hourly cron reports what is new instead of restating every agreement it has ever
-reached. `--recheck` re-verifies it from the adapter anyway. A contradiction is never carried: it
-is still true and still unfixed, so it appears every run until the world changes.
+reached. `--recheck` re-verifies it from the adapter anyway. A contradiction is never carried: it is
+still true and still unfixed, so it appears every run until the world changes. An unclaimed run IS
+carried once reported, because the report was the whole finding.
+
+What the next run reads is `<out>/settled.json`, a small index of the matched claims and the unclaimed
+runs already reported. It exists so a run does not parse every receipt it has ever written; if it is
+lost or corrupt, it is rebuilt from the receipts rather than losing what was settled.
 
 ## Adapters
 
@@ -368,8 +394,9 @@ landed watch
 
 - **No model, anywhere.** The join is deterministic, and `test/no-model.test.mjs` pins it. A
   verdict that depended on a sampled answer would be one more claim rather than a check on claims.
-- **No writes outside `--out`.** `landed` reads the authoritative systems and reports. It does not
-  fix, retry, re-send or repair anything.
+- **No writes outside `--out`,** with one exception it is asked for by name: `append` writes the claim
+  you hand it to the claims file you name. `landed` reads the authoritative systems and reports. It
+  does not fix, retry, re-send or repair anything.
 - **No daemon, no UI.** See above.
 - **No real data in the repo.** Every fixture is synthetic. `npm run privacy` refuses any email at
   a domain that is not reserved for documentation, any phone-shaped string outside `fixtures/`, and
@@ -392,3 +419,4 @@ the commit that staled it.
 | `docs/ADAPTERS.md` | The adapter contract, in enough detail to write one |
 | `.vibecodepm/flow.md` | Entry points, the happy path, every state, every recovery path |
 | `.vibecodepm/metrics.md` | The activation event, and how it is measured without telephoning anywhere |
+| `.vibecodepm/ship-check.md` | The independent review that blocked the first release, and every finding it made |

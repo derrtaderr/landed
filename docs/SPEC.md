@@ -1,8 +1,9 @@
 ---
 name: landed phase 1 spec
 read_by: any session touching src/, test/ or the adapter contract in this repo, and the reviewer of lane/row65-landed-core, before the first edit
-status: current — describes the build on lane/row65-landed-core
+status: current — describes the build on lane/row65-landed-core after ship-check wave 1
 date: 2026-09-26
+wave: 2 (post-ship-check; §6 holds the decided contract and every finding's resolution)
 ---
 
 # landed — phase 1
@@ -117,14 +118,24 @@ the default branch.
 
 | State | When |
 |---|---|
-| `matched` | The receipt exists and its facts agree with the claim. |
+| `matched` | The receipt exists and its facts agree with the claim's KIND. |
 | `contradicted` | Both records were read and they disagree. |
 | `unresolved` | The join could not be made. Everything unknown lands here. |
 
+Plus one row class that is not a claim state at all, added by decision D2: `unclaimed`, for a record
+the authoritative system holds that no claim accounts for.
+
 | Verdict | When |
 |---|---|
-| `orphaned-claim` | Claimed, and a complete read of a non-empty source has no such record. |
-| `executed-never-claimed` | A record the adapter enumerated that no claim covers. |
+| `orphaned-claim` | Claimed, and a complete read of a non-empty source, inside a PRESENT container, has no such record. |
+| `executed-never-claimed` | A record the adapter enumerated, inside the scope the claims named, that no claim covers. Carries state `unclaimed`. |
+
+**The claim's kind decides, and only the kind.** `RECEIPT_SHAPES_BY_KIND` in `src/reconcile.mjs`
+says which receipt shapes can answer which kind, and a kind handed a shape it cannot read resolves
+`unresolved RECEIPT_SHAPE_MISMATCH`. This is the fix for the one finding that blocked the first
+ship-check: a `completed` claim carrying both `executionId` and `workflowId` was routed to the n8n
+workflow-window branch, `interpret` dispatched on the receipt's shape before it read the claim, and
+an errored execution came back `matched FIRED_AS_CLAIMED` at exit 0.
 
 **GREEN IS EARNED.** These five states are table-tested in
 `test/false-green.test.mjs`, and each resolves to `unresolved` or a refusal. None may ever
@@ -142,8 +153,28 @@ An empty source is the one that looks most like good news and is not. Zero execu
 export is indistinguishable from a failed export, so absence is only evidence when the source
 returned something. That is the difference between #2 and `orphaned-claim`.
 
-A run whose every claim is `unresolved` exits non-zero under `--strict`. An unreachable
-authoritative side is never converted into green.
+### C.1 Exit codes
+
+Decided by the orchestrator after ship-check F-07, whose finding was that a run which lost its export
+path or its `gh` credential exited 0, and that the cron recipe the tool printed did not pass
+`--strict`. The exit code is the only thing cron reads.
+
+| Code | Meaning |
+|---|---|
+| `0` | The run ran, every claim resolved, and nothing disagreed |
+| `1` | Findings: something is contradicted |
+| `2` | A refusal: no claims file, nothing in it, an unwritable `--out`, a flag that makes no sense |
+| `3` | Nothing resolved: every claim came back `unresolved` |
+
+`--strict` promotes ANY unresolved claim to exit 3, and the `watch` recipe passes it in both the
+cron and the launchd form. A lost credential must never share an exit code with a quiet healthy hour.
+
+Unclaimed runs do not set the exit code (D2). They are reported in their own section, and a run whose
+only finding is an unclaimed run exits 0. That is a deliberate consequence of an unclaimed run
+contradicting no claim; if it should alarm, that is a decision to revisit with a flag rather than by
+overloading exit 1.
+
+### C.2 The false-green table
 
 ### D. Receipts and idempotency
 
@@ -227,7 +258,94 @@ nothing stands between them on a schedule.
    lost its credential and a check with nothing to report must not look identical, so the output
    says which. See §7.
 
-## 6. Gate set, per area
+## 6. Wave 2: the decided contract, and what changed
+
+An independent ship-check blocked the first PR. `.vibecodepm/ship-check.md` holds the record. The
+orchestrator settled four contract questions, and this section is where they live.
+
+### D1. Exit codes
+
+See §3C.1. A fourth code, 3, for "nothing resolved", and `--strict` promotes any unresolved claim to
+it. **Reason:** exit 0 on a lost credential is the same false green the whole row exists to forbid,
+one level up. The tool was printing a warning in a place cron does not read.
+
+### D2. Enumeration is scoped and separate
+
+`executed-never-claimed` is not a contradiction of any claim. It is its own row class (`unclaimed`),
+in its own section, counted apart, excluded from the exit code, and carried across runs once
+reported. The scope is the subjects the claims named, read through the adapter's `subjectKey`, over
+the windows those claims asked about; `--enumerate all` widens it. A subject whose own claim could
+not be resolved is not enumerated at all, and the skip is reported as `ENUMERATION_SUPPRESSED`.
+
+**Reason:** three separate wrongs came from treating an unclaimed run as a contradiction. Omitting
+`--n8n-workflows` turned one unresolved claim into seven false contradictions, because a receipt with
+no facts accounted for nothing. An operator claiming one workflow on a busy instance got every other
+workflow's runs, every hour, with no way to scope or suppress them. And a row that was never carried
+alarmed identically forever.
+
+### D3. A 404 is an absence only when the container is proven present
+
+GitHub classification runs on the spawn error, the exit code and the HTTP status. Never on body text.
+A 404 on anything inside a repository triggers a read of the repository itself: if that fails, every
+claim on it is `unresolved REPO_UNREACHABLE`. A `pushed` claim whose branch is gone asks whether a PR
+from it was merged, and reports `matched MERGED_AND_BRANCH_DELETED` when one was.
+
+**Reason:** a successful `compare` returns up to 250 commit messages, so scanning stdout for "Not
+Found" produced false absences on ordinary repositories. And GitHub answers 404 for a repo that does
+not exist, for a private repo the token cannot see, and for a branch deleted at merge, which is the
+normal end of healthy work. A current absence can only contradict a past claim when the container is
+present; without that, "it is not there now" and "you cannot see it" are the same sentence.
+
+### D4. Cadence stays declared on the claim
+
+`count-vs-cadence` is a consistency check against **the operator's declared expectation**, not a
+schedule check. The claim carries `cadence: {expected_fires}` or `{every_seconds}`, and the detail
+text says so.
+
+Two things follow, and both are stated here because they bound what the check is worth:
+
+1. **The claim writer must be the operator's hook, not the agent being checked.** An agent that
+   declares its own expected cadence and then reports against it is grading itself. §3A's rule about
+   who appends the claims file is the same rule, and the README says it in the operator's words.
+2. **Schedule parsing from the workflow export is phase 2.** An n8n schedule lives in an untyped
+   node-parameters blob whose shape moves between trigger types and versions. Until that is parsed,
+   `count-vs-cadence` cannot tell a wrong declaration from a wrong schedule.
+
+**The window is HALF-OPEN, `[from, to)`,** pinned by a test at both edges. With both edges inclusive,
+an hourly workflow over a one-hour window fired twice against a declared cadence of one, and every
+healthy schedule was contradicted forever. Half-open makes consecutive windows partition time instead
+of overlapping at every boundary.
+
+### What else wave 2 changed
+
+| Finding | Resolution |
+|---|---|
+| F-02 | An absent or non-boolean `active` key reports `null` and resolves `ACTIVE_FLAG_UNKNOWN`. Reading it as inactive manufactured a red exactly as reading it as active would have manufactured a green. |
+| F-08 | `src/static-checks.mjs` is the one implementation of every check that needs no lookup. `validate`, `check` and `append` all call it, so they cannot disagree. |
+| F-10 | A claim with no window is read against six hours either side of its own instant, and the result carries the window and its source. A windowless claim used to match a fire three days older than itself. |
+| F-11 | Fires are deduplicated by execution id before double-fire detection, because an export assembled from overlapping pages lists the same run twice and two copies are 0 seconds apart. |
+| W-1 | The trust footer prints only when every rendered row was read from a reachable source on this run. Otherwise it says how many were not, and which reason codes. `report` says it rendered a stored receipt. |
+| W-3 | `hostExec` separates a failure to START (`spawn_error`) from an exit code, so "gh is not installed" fires. |
+| m-1 | A window that is not an object, does not parse, or runs backwards is a malformed claim. It used to slip past the skew check, because NaN compares false everywhere, and then produce a false orphaned-claim. |
+| m-2 | A join key value carrying whitespace or URL structure is refused before any call, and a record naming a different branch than the claim is `RECEIPT_TARGET_MISMATCH`. |
+| m-3 | A repeated flag is refused; `--help` prints usage at exit 0. |
+| m-4 | `report` exits 0 when it rendered and 2 when there was nothing to render, replacing a dead ternary. |
+| m-5 | An unwritable `--out` is a one-line refusal at exit 2 rather than an uncaught stack at exit 1, and two receipts in one instant get a suffix. |
+| m-6 | A `settled.json` index beside the receipts replaces re-parsing every receipt ever written, with `--since` to bound the claims read. The old scan survives as a repair path. |
+| m-7 | Claims and unclaimed runs are counted and rendered separately; the `--strict` hint prints only when not strict. |
+| m-8 | Any ISO 8601 offset is accepted. A bare local time is still refused, because an instant with no zone is not an instant. |
+| m-9 | `running`, `waiting` and `new` are `unresolved STILL_RUNNING`. A reason code must not disagree with the fact printed beside it. |
+
+One more, found by reading the demo's own output rather than by a test: a claim keyed by execution id
+named no subject but its DEFAULT window still widened the enumeration scope by six hours. The scope
+now comes only from claims that named a subject.
+
+### Recorded as follow-ups, not in this wave
+
+Schedule parsing from workflow exports; receipt pruning beyond the settled index; a `--recheck` flip
+report naming what changed; n8n live REST against a hosted instance.
+
+## 7. Gate set, per area
 
 Every one of these runs before the PR, and its exit code is reported.
 
@@ -243,10 +361,8 @@ Freshness is coupled in the commit, not in a checklist: README example blocks, t
 expected output, `.vibecodepm/flow.md` and `.vibecodepm/metrics.md` change in the same commit
 as the code that staled them.
 
-## 7. Open question for review
+## 8. The open question, answered
 
-**Should a run whose every claim is `unresolved` exit non-zero without `--strict`?** Today it
-exits 0, per the dispatch. That is a run which read nothing from the authoritative side, and in
-cron it is indistinguishable by exit code from a healthy quiet hour. The output says so plainly
-and `--strict` makes it fatal, so nothing is hidden; but the default may be the wrong one, and
-changing it is a decision about the contract rather than a bug fix.
+Wave 1 asked whether a run whose every claim is `unresolved` should exit non-zero without
+`--strict`. The orchestrator's answer is D1: it exits **3**, with or without `--strict`, and
+`--strict` promotes any unresolved claim to the same code. The question is closed.
