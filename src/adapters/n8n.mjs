@@ -1,0 +1,226 @@
+// The n8n adapter.
+//
+// It reads an executions export: a JSON file the operator downloads, or a saved `/executions`
+// REST response. Live REST is optional and is only attempted when a URL and a key are
+// configured. Either way the adapter reports what the export SAYS, and nothing about whether a
+// claim was honest.
+//
+// Two things it is careful about, because both were false-green states in the wild:
+//
+//   1. An export with zero executions is not evidence that nothing ran. It reports
+//      `source.empty`, and the core turns that into `unresolved`.
+//   2. A paginated export that stopped early cannot rule anything out. n8n's REST response
+//      carries `nextCursor` when more pages exist, and an export whose coverage does not span
+//      the window asked about is equally incomplete. Both report `source.complete: false`.
+
+const KINDS = ['executed', 'completed'];
+
+function unreachable(reason) {
+  return { reachable: false, reason };
+}
+
+function rowsOf(payload) {
+  if (Array.isArray(payload)) return { rows: payload, nextCursor: null };
+  if (Array.isArray(payload?.data)) return { rows: payload.data, nextCursor: payload.nextCursor ?? null };
+  return null;
+}
+
+async function loadExport(kind, deps) {
+  const config = deps.config?.n8n ?? {};
+
+  if (config.url !== undefined && config.apiKey !== undefined) {
+    return loadFromRest(kind, config, deps);
+  }
+
+  const path = kind === 'workflows' ? config.workflowsPath : config.executionsPath;
+  if (path === undefined) {
+    return {
+      error: `no n8n ${kind} export is configured; pass --n8n-${kind} <file>, or set LANDED_N8N_URL and LANDED_N8N_API_KEY`,
+    };
+  }
+
+  let text;
+  try {
+    text = deps.readFile(path);
+  } catch (error) {
+    return { error: `cannot read the n8n ${kind} export at ${path}: ${error.message}` };
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (error) {
+    return { error: `the n8n ${kind} export at ${path} is not valid JSON: ${error.message}` };
+  }
+
+  const parsed = rowsOf(payload);
+  if (parsed === null) {
+    return { error: `the n8n ${kind} export at ${path} is neither an array nor a { data: [...] } response` };
+  }
+
+  return parsed;
+}
+
+// The optional live path. It is deliberately one page: a live read that silently stops at page
+// one and reports completeness would be the same lie as a truncated file.
+async function loadFromRest(kind, config, deps) {
+  if (typeof deps.fetch !== 'function') {
+    return { error: 'a live n8n read needs a fetch implementation, and none was provided' };
+  }
+
+  const url = `${String(config.url).replace(/\/$/, '')}/api/v1/${kind}`;
+  let response;
+  try {
+    response = await deps.fetch(url, { headers: { 'X-N8N-API-KEY': config.apiKey, accept: 'application/json' } });
+  } catch (error) {
+    return { error: `the n8n API at ${url} could not be reached: ${error.message}` };
+  }
+
+  if (!response.ok) {
+    return { error: `the n8n API at ${url} answered ${response.status}` };
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    return { error: `the n8n API at ${url} did not return JSON: ${error.message}` };
+  }
+
+  const parsed = rowsOf(payload);
+  return parsed === null ? { error: `the n8n API at ${url} returned an unexpected shape` } : parsed;
+}
+
+function coverage(rows) {
+  const instants = rows
+    .map((row) => Date.parse(row.startedAt))
+    .filter((value) => !Number.isNaN(value))
+    .sort((a, b) => a - b);
+  if (instants.length === 0) return null;
+  return { from: new Date(instants[0]).toISOString(), to: new Date(instants.at(-1)).toISOString() };
+}
+
+function contains(outer, inner) {
+  if (outer === null || inner === undefined) return true;
+  return Date.parse(outer.from) <= Date.parse(inner.from) && Date.parse(outer.to) >= Date.parse(inner.to);
+}
+
+function withinWindow(instant, window) {
+  if (window === undefined) return true;
+  const at = Date.parse(instant);
+  return at >= Date.parse(window.from) && at <= Date.parse(window.to);
+}
+
+export const n8n = {
+  name: 'n8n',
+  kinds: KINDS,
+
+  // `executed` asks about a workflow over a window. `completed` asks about one execution, so it
+  // is keyed by id and no window bounds the read.
+  requiredKeys: { executed: ['workflowId'], completed: ['executionId'] },
+
+  async lookup(target, deps) {
+    const executions = await loadExport('executions', deps);
+    if (executions.error !== undefined) return unreachable(executions.error);
+
+    const rows = executions.rows;
+    const truncated = executions.nextCursor !== null && executions.nextCursor !== undefined;
+
+    if (target.executionId !== undefined && target.workflowId === undefined) {
+      const source = { complete: !truncated, empty: rows.length === 0 };
+      if (rows.length === 0) return { found: false, source };
+      const row = rows.find((candidate) => String(candidate.id) === String(target.executionId));
+      if (row === undefined) return { found: false, source };
+      return {
+        found: true,
+        source,
+        facts: {
+          kind: 'execution',
+          id: String(row.id),
+          workflowId: String(row.workflowId ?? ''),
+          status: row.status ?? (row.finished === true ? 'success' : 'unknown'),
+          startedAt: row.startedAt ?? null,
+          stoppedAt: row.stoppedAt ?? null,
+        },
+      };
+    }
+
+    // A window-scoped read. The source's window is what the export actually COVERS, which is
+    // what lets the core catch a claim dated outside it.
+    const covered = coverage(rows);
+    const source = {
+      complete: !truncated && contains(covered, target.window),
+      empty: rows.length === 0,
+      ...(covered === null ? {} : { window: covered }),
+    };
+
+    if (rows.length === 0 || source.complete === false) return { found: false, source };
+
+    const fires = rows
+      .filter((row) => String(row.workflowId) === String(target.workflowId))
+      .filter((row) => withinWindow(row.startedAt, target.window))
+      .map((row) => ({
+        executionId: String(row.id),
+        startedAt: row.startedAt,
+        status: row.status ?? (row.finished === true ? 'success' : 'unknown'),
+      }));
+
+    if (fires.length === 0) return { found: false, source };
+
+    // The active flag lives in the workflow list, not the executions export, so a
+    // fired-while-inactive check without that export is a check that cannot run. Saying so is
+    // the honest answer; assuming `active: true` would manufacture a green.
+    const workflows = await loadExport('workflows', deps);
+    if (workflows.error !== undefined) {
+      return unreachable(`${workflows.error} — and the fired-while-inactive check needs it`);
+    }
+
+    const workflow = workflows.rows.find((candidate) => String(candidate.id) === String(target.workflowId));
+    if (workflow === undefined) {
+      return unreachable(`workflow ${target.workflowId} is not in the workflows export, so its active flag is unknown`);
+    }
+
+    return {
+      found: true,
+      source,
+      facts: {
+        kind: 'fires',
+        workflowId: String(target.workflowId),
+        name: workflow.name ?? null,
+        active: workflow.active === true,
+        fires,
+        // What this one receipt stands for, so the core can tell an unclaimed run from a run
+        // this claim already covered without knowing what an n8n execution is.
+        covers: fires.map((fire) => fire.executionId),
+      },
+    };
+  },
+
+  // What ran in the window, claimed or not. This is what makes `executed-never-claimed`
+  // possible for n8n.
+  async enumerate(scope, deps) {
+    const executions = await loadExport('executions', deps);
+    if (executions.error !== undefined) return { reachable: false, reason: executions.error };
+
+    const rows = executions.rows;
+    const truncated = executions.nextCursor !== null && executions.nextCursor !== undefined;
+    const covered = coverage(rows);
+
+    return {
+      source: {
+        complete: !truncated && contains(covered, scope),
+        empty: rows.length === 0,
+        ...(covered === null ? {} : { window: covered }),
+      },
+      records: rows
+        .filter((row) => withinWindow(row.startedAt, scope))
+        .map((row) => ({
+          kind: 'execution',
+          id: String(row.id),
+          workflowId: String(row.workflowId ?? ''),
+          startedAt: row.startedAt ?? null,
+          status: row.status ?? (row.finished === true ? 'success' : 'unknown'),
+        })),
+    };
+  },
+};

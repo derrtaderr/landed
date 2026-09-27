@@ -139,6 +139,22 @@ function interpret(base, claim, facts, doubleFireSeconds) {
   return matched(base, 'RECORD_EXISTS', `the authoritative system has a ${facts?.kind ?? 'record'} for this target`);
 }
 
+// A join key is either a name the target must carry, or a nested array meaning "at least one
+// of these". GitHub answers a `pushed` claim about a branch OR about a commit, and a contract
+// that could not say so would push that choice into the adapter, where the core could no
+// longer refuse a target it cannot join.
+function missingJoinKeys(required, target) {
+  const missing = [];
+  for (const key of required) {
+    if (Array.isArray(key)) {
+      if (key.every((alternative) => target[alternative] === undefined)) missing.push(key.join(' or '));
+    } else if (target[key] === undefined) {
+      missing.push(key);
+    }
+  }
+  return missing;
+}
+
 async function resolveOne(record, adapters, deps, doubleFireSeconds) {
   const base = {
     claim_id: record.id,
@@ -167,8 +183,7 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
     );
   }
 
-  const required = adapter.requiredKeys?.[claim.kind] ?? [];
-  const missing = required.filter((key) => claim.target[key] === undefined);
+  const missing = missingJoinKeys(adapter.requiredKeys?.[claim.kind] ?? [], claim.target);
   if (missing.length > 0) {
     return unresolved(
       base,
@@ -247,13 +262,15 @@ function bareResult(adapter, fields) {
 // enumerate never produces this verdict, which is the honest outcome; a zero from an adapter
 // that cannot look is not the same as a zero from one that looked.
 async function findUnclaimed(records, adapters, deps, results) {
+  // What a claim ACCOUNTS FOR comes from the receipt's own declaration: `facts.id` for a
+  // single record, `facts.covers` for a receipt that stands for several. The core knowing which
+  // vendor field held the ids was the gap test/new-adapter.test.mjs opened; a receipt that
+  // declares no coverage accounts for nothing, which is the safe default.
   const accounted = new Set();
   for (const result of results) {
     const facts = result.receipt?.facts;
-    if (facts?.kind === 'execution' && facts.id !== undefined) accounted.add(`${result.adapter}:${facts.id}`);
-    if (facts?.kind === 'fires') {
-      for (const fire of facts.fires ?? []) accounted.add(`${result.adapter}:${fire.executionId}`);
-    }
+    if (facts?.id !== undefined) accounted.add(`${result.adapter}:${facts.id}`);
+    for (const id of facts?.covers ?? []) accounted.add(`${result.adapter}:${id}`);
   }
 
   const extras = [];
