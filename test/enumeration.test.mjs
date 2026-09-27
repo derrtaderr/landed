@@ -249,3 +249,35 @@ test('--enumerate takes only the documented values', async () => {
   assert.equal(code, 2);
   assert.match(err.join('\n'), /--enumerate/);
 });
+
+// --- the scope comes from the claims that NAMED a subject ------------------------------------
+
+test('a claim keyed by execution id does not widen the enumeration window', async () => {
+  // Found by reading the demo output after F-10 landed. A `completed` claim names no workflow, so it
+  // contributes no subject, but its DEFAULT window (six hours either side of its instant) was still
+  // folded into the union and dragged a 09:58 run into scope for an unrelated claim about 10:00-11:00.
+  // The scope is the subjects the claims named, over the windows THOSE claims asked about.
+  const claims = [
+    executedClaim('c-1', 'wf-201'),
+    { id: 'c-done', at: '2026-09-26T10:51:00.000Z', actor: 'x', kind: 'completed', target: { adapter: 'n8n', executionId: 'e-4001' } },
+  ];
+
+  const outcome = await resolve(claims);
+  const ids = unclaimedRows(outcome).map((row) => row.receipt.facts.id);
+
+  assert.ok(!ids.includes('e-1001'), `09:58 is outside the claimed window, but was reported: ${ids.join(', ')}`);
+});
+
+test('a claim that named a subject DOES contribute its window to the scope', async () => {
+  // wf-203 is claimed for the first five minutes only, and it really fired at 10:10. Alone, that
+  // claim's window ends at 10:05 and the 10:10 runs are outside anything being reconciled. Add a
+  // claim about wf-201 over the full hour and the union reaches 11:00, so those runs come into scope
+  // and are reported. The scope moves with the claims, which is the whole of D2.
+  const narrow = { id: 'c-203', at: '2026-09-26T10:02:00.000Z', actor: 'x', kind: 'executed', target: { adapter: 'n8n', workflowId: 'wf-203', window: { from: '2026-09-26T10:00:00.000Z', to: '2026-09-26T10:05:00.000Z' } } };
+
+  const alone = await resolve([narrow]);
+  assert.deepEqual(unclaimedRows(alone).map((row) => row.receipt.facts.id), [], 'nothing outside the claimed five minutes');
+
+  const widened = await resolve([narrow, executedClaim('c-1', 'wf-201')]);
+  assert.deepEqual(unclaimedRows(widened).map((row) => row.receipt.facts.id).sort(), ['e-3001', 'e-3002']);
+});

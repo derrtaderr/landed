@@ -57,7 +57,7 @@ landed 2026-09-26T11:00:00.000Z
   4 unresolved claims
   3 matched claims
   2 orphaned claims
-  2 runs nobody claimed
+  1 run nobody claimed
 
   c-2         contradicted  n8n     FIRED_WHILE_INACTIVE
       wf-202 fired 1 time(s) while its active flag was false (first at 2026-09-26T10:05:00.000Z)
@@ -88,19 +88,17 @@ landed 2026-09-26T11:00:00.000Z
   c-13        matched       github  MERGED_AND_BRANCH_DELETED
       lane/claims-format is gone from the remote because PR #38 merged it at 4f1c9ab6d2e30517c8a1b4d9f0e6a2c37b58d194
 
-  unclaimed runs (2) — records the authoritative system holds that no claim accounts for
-  (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
-      n8n ran e-1001 (wf-201) at 2026-09-26T09:58:00.000Z; no claim accounts for it
+  unclaimed runs (1) — records the authoritative system holds that no claim accounts for
   (unclaimed) unclaimed     n8n     EXECUTED_NEVER_CLAIMED [executed-never-claimed]
       n8n ran e-6001 (wf-206) at 2026-09-26T10:55:00.000Z; no claim accounts for it
 
   receipt   /tmp/landed-demo/receipts/2026-09-26T11-00-00-000Z.json
-  7 contradicted, 4 unresolved, 3 matched, out of 16 joined records
+  7 contradicted, 4 unresolved, 3 matched, out of 15 joined records
 
   This is the recorded demo corpus, so it disagrees on purpose and still exits 0.
   A non-zero demo would read as a broken install rather than as a working tool.
 
-  4 of 16 rows above were not read from the system of record on this run
+  4 of 15 rows above were not read from the system of record on this run
   (CLOCK_SKEW, ENUMERATION_SUPPRESSED, MALFORMED_CLAIM, UNKNOWN_ADAPTER). The rest were.
 ```
 

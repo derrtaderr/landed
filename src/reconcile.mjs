@@ -443,10 +443,13 @@ async function findUnclaimed(records, adapters, deps, results, enumerateAll) {
     const scopeSubjects = enumerateAll ? null : [...subjects].filter((subject) => !suppressed.has(subject));
     if (scopeSubjects !== null && scopeSubjects.length === 0) continue;
 
-    // The union of the windows the claims were read against. Enumerating wider would report runs
-    // from a period nobody was reconciling.
+    // The union of the windows asked about by the claims THAT NAMED A SUBJECT. A claim keyed by
+    // execution id names no workflow, so it contributes no subject; folding its default window in
+    // anyway dragged an unrelated run six hours away into scope, which is how the demo first showed
+    // this.
     const windows = results
       .filter((result) => result.adapter === name && result.window !== null && result.window !== undefined)
+      .filter((result) => subjectOf(adapter, result.target ?? {}) !== undefined)
       .map((result) => result.window);
     if (windows.length === 0) continue;
 
