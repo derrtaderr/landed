@@ -143,6 +143,15 @@ function interpret(base, claim, facts, doubleFireSeconds) {
 // of these". GitHub answers a `pushed` claim about a branch OR about a commit, and a contract
 // that could not say so would push that choice into the adapter, where the core could no
 // longer refuse a target it cannot join.
+// The join keys, spelled out. "No record for this target" sends an operator back to the claims
+// file to work out which target; the keys are already in hand, so the detail carries them.
+function describeTarget(target) {
+  const keys = Object.entries(target)
+    .filter(([key, value]) => key !== 'adapter' && key !== 'window' && key !== 'cadence' && typeof value !== 'object')
+    .map(([key, value]) => `${key}=${value}`);
+  return keys.length === 0 ? 'this target' : keys.join(' ');
+}
+
 function missingJoinKeys(required, target) {
   const missing = [];
   for (const key of required) {
@@ -239,7 +248,7 @@ async function resolveOne(record, adapters, deps, doubleFireSeconds) {
     return contradicted(
       withReceipt,
       'ORPHANED_CLAIM',
-      `${adapter.name} read its source and has no record for this target`,
+      `${adapter.name} read its source and has no record for ${describeTarget(claim.target)}`,
       'orphaned-claim',
     );
   }
