@@ -1,0 +1,19 @@
+{
+  "name": "landed",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A scheduled reconciler that joins what an agent claimed against what actually landed.",
+  "type": "module",
+  "bin": {
+    "landed": "./bin/landed.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "privacy": "node scripts/privacy-guard.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
