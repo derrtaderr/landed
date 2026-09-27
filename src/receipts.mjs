@@ -12,19 +12,42 @@ export const RECEIPT_VERSION = 1;
 
 // Colons are legal in a POSIX filename and a nuisance everywhere else, so the instant is
 // flattened. The substitution keeps lexical order equal to chronological order.
-export function receiptFilename(at) {
-  return `${at.replace(/:/g, '-').replace(/\./g, '-')}.json`;
+export function receiptFilename(at, suffix = 1) {
+  const stem = at.replace(/:/g, '-').replace(/\./g, '-');
+  return suffix === 1 ? `${stem}.json` : `${stem}--${suffix}.json`;
 }
 
 export function receiptsDir(outDir) {
   return join(outDir, 'receipts');
 }
 
+// Thrown when the out directory cannot be written. The CLI turns it into a one-line refusal; an
+// uncaught stack trace exits 1, which is the same code as "findings" and reads as an alarm.
+export class ReceiptWriteError extends Error {}
+
 export function writeReceipt(outDir, receipt) {
   const dir = receiptsDir(outDir);
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, receiptFilename(receipt.at));
-  writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`);
+
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    throw new ReceiptWriteError(`cannot write receipts into ${dir}: ${error.code ?? error.message}`);
+  }
+
+  // Two runs can land in the same millisecond, and the second must not erase the first. A suffix is
+  // added rather than the name reused, so the receipt set is append-only in practice as well as in
+  // intent.
+  let path = join(dir, receiptFilename(receipt.at));
+  for (let suffix = 2; existsSync(path); suffix += 1) {
+    path = join(dir, receiptFilename(receipt.at, suffix));
+  }
+
+  try {
+    writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`);
+  } catch (error) {
+    throw new ReceiptWriteError(`cannot write ${path}: ${error.code ?? error.message}`);
+  }
+
   return path;
 }
 
