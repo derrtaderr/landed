@@ -1,0 +1,591 @@
+{
+  "schema": "system-map/baseline@1",
+  "modules": [
+    {
+      "path": "bin/landed.mjs",
+      "language": "node",
+      "contentHash": "8edb95d66169",
+      "cite": "bin/landed.mjs:1"
+    },
+    {
+      "path": "scripts/privacy-guard.mjs",
+      "language": "node",
+      "contentHash": "c3076b751c04",
+      "cite": "scripts/privacy-guard.mjs:1"
+    },
+    {
+      "path": "src/adapters/github.mjs",
+      "language": "node",
+      "contentHash": "801369f7c3c5",
+      "cite": "src/adapters/github.mjs:1"
+    },
+    {
+      "path": "src/adapters/index.mjs",
+      "language": "node",
+      "contentHash": "5616dd6598d8",
+      "cite": "src/adapters/index.mjs:1"
+    },
+    {
+      "path": "src/adapters/n8n.mjs",
+      "language": "node",
+      "contentHash": "abc3034e8494",
+      "cite": "src/adapters/n8n.mjs:1"
+    },
+    {
+      "path": "src/append.mjs",
+      "language": "node",
+      "contentHash": "bd996f4e9d5e",
+      "cite": "src/append.mjs:1"
+    },
+    {
+      "path": "src/claims.mjs",
+      "language": "node",
+      "contentHash": "bf440f180a8a",
+      "cite": "src/claims.mjs:1"
+    },
+    {
+      "path": "src/cli.mjs",
+      "language": "node",
+      "contentHash": "67276e4c2447",
+      "cite": "src/cli.mjs:1"
+    },
+    {
+      "path": "src/demo.mjs",
+      "language": "node",
+      "contentHash": "2b0d879c3590",
+      "cite": "src/demo.mjs:1"
+    },
+    {
+      "path": "src/host.mjs",
+      "language": "node",
+      "contentHash": "65e55d43be14",
+      "cite": "src/host.mjs:1"
+    },
+    {
+      "path": "src/receipts.mjs",
+      "language": "node",
+      "contentHash": "4f0891ca86ff",
+      "cite": "src/receipts.mjs:1"
+    },
+    {
+      "path": "src/reconcile.mjs",
+      "language": "node",
+      "contentHash": "70f515e6e863",
+      "cite": "src/reconcile.mjs:1"
+    },
+    {
+      "path": "src/report.mjs",
+      "language": "node",
+      "contentHash": "30b8e8ee8385",
+      "cite": "src/report.mjs:1"
+    },
+    {
+      "path": "src/run.mjs",
+      "language": "node",
+      "contentHash": "5ac7d505d497",
+      "cite": "src/run.mjs:1"
+    },
+    {
+      "path": "src/static-checks.mjs",
+      "language": "node",
+      "contentHash": "3f304ec40583",
+      "cite": "src/static-checks.mjs:1"
+    }
+  ],
+  "edges": [
+    {
+      "from": "bin/landed.mjs",
+      "specifier": "../src/cli.mjs",
+      "kind": "import",
+      "line": 2,
+      "cite": "bin/landed.mjs:2",
+      "to": "src/cli.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "scripts/privacy-guard.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 20,
+      "cite": "scripts/privacy-guard.mjs:20",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "scripts/privacy-guard.mjs",
+      "specifier": "node:child_process",
+      "kind": "import",
+      "line": 21,
+      "cite": "scripts/privacy-guard.mjs:21",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "scripts/privacy-guard.mjs",
+      "specifier": "node:path",
+      "kind": "import",
+      "line": 22,
+      "cite": "scripts/privacy-guard.mjs:22",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/adapters/index.mjs",
+      "specifier": "./n8n.mjs",
+      "kind": "import",
+      "line": 10,
+      "cite": "src/adapters/index.mjs:10",
+      "to": "src/adapters/n8n.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/adapters/index.mjs",
+      "specifier": "./github.mjs",
+      "kind": "import",
+      "line": 11,
+      "cite": "src/adapters/index.mjs:11",
+      "to": "src/adapters/github.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/append.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 11,
+      "cite": "src/append.mjs:11",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/append.mjs",
+      "specifier": "node:crypto",
+      "kind": "import",
+      "line": 12,
+      "cite": "src/append.mjs:12",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/append.mjs",
+      "specifier": "node:path",
+      "kind": "import",
+      "line": 13,
+      "cite": "src/append.mjs:13",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/append.mjs",
+      "specifier": "./claims.mjs",
+      "kind": "import",
+      "line": 15,
+      "cite": "src/append.mjs:15",
+      "to": "src/claims.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 11,
+      "cite": "src/cli.mjs:11",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "node:path",
+      "kind": "import",
+      "line": 12,
+      "cite": "src/cli.mjs:12",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./adapters/index.mjs",
+      "kind": "import",
+      "line": 14,
+      "cite": "src/cli.mjs:14",
+      "to": "src/adapters/index.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./receipts.mjs",
+      "kind": "import",
+      "line": 15,
+      "cite": "src/cli.mjs:15",
+      "to": "src/receipts.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./claims.mjs",
+      "kind": "import",
+      "line": 16,
+      "cite": "src/cli.mjs:16",
+      "to": "src/claims.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./static-checks.mjs",
+      "kind": "import",
+      "line": 17,
+      "cite": "src/cli.mjs:17",
+      "to": "src/static-checks.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./reconcile.mjs",
+      "kind": "import",
+      "line": 18,
+      "cite": "src/cli.mjs:18",
+      "to": "src/reconcile.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./run.mjs",
+      "kind": "import",
+      "line": 19,
+      "cite": "src/cli.mjs:19",
+      "to": "src/run.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./receipts.mjs",
+      "kind": "import",
+      "line": 20,
+      "cite": "src/cli.mjs:20",
+      "to": "src/receipts.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./report.mjs",
+      "kind": "import",
+      "line": 21,
+      "cite": "src/cli.mjs:21",
+      "to": "src/report.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./host.mjs",
+      "kind": "import",
+      "line": 22,
+      "cite": "src/cli.mjs:22",
+      "to": "src/host.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./demo.mjs",
+      "kind": "import",
+      "line": 23,
+      "cite": "src/cli.mjs:23",
+      "to": "src/demo.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/cli.mjs",
+      "specifier": "./append.mjs",
+      "kind": "import",
+      "line": 24,
+      "cite": "src/cli.mjs:24",
+      "to": "src/append.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 11,
+      "cite": "src/demo.mjs:11",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "node:path",
+      "kind": "import",
+      "line": 12,
+      "cite": "src/demo.mjs:12",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "node:url",
+      "kind": "import",
+      "line": 13,
+      "cite": "src/demo.mjs:13",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "./adapters/index.mjs",
+      "kind": "import",
+      "line": 15,
+      "cite": "src/demo.mjs:15",
+      "to": "src/adapters/index.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "./claims.mjs",
+      "kind": "import",
+      "line": 16,
+      "cite": "src/demo.mjs:16",
+      "to": "src/claims.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/demo.mjs",
+      "specifier": "./run.mjs",
+      "kind": "import",
+      "line": 17,
+      "cite": "src/demo.mjs:17",
+      "to": "src/run.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/host.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 6,
+      "cite": "src/host.mjs:6",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/host.mjs",
+      "specifier": "node:child_process",
+      "kind": "import",
+      "line": 7,
+      "cite": "src/host.mjs:7",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/receipts.mjs",
+      "specifier": "node:fs",
+      "kind": "import",
+      "line": 8,
+      "cite": "src/receipts.mjs:8",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/receipts.mjs",
+      "specifier": "node:path",
+      "kind": "import",
+      "line": 9,
+      "cite": "src/receipts.mjs:9",
+      "to": null,
+      "external": true,
+      "builtin": true
+    },
+    {
+      "from": "src/reconcile.mjs",
+      "specifier": "./static-checks.mjs",
+      "kind": "import",
+      "line": 7,
+      "cite": "src/reconcile.mjs:7",
+      "to": "src/static-checks.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/run.mjs",
+      "specifier": "./receipts.mjs",
+      "kind": "import",
+      "line": 10,
+      "cite": "src/run.mjs:10",
+      "to": "src/receipts.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/run.mjs",
+      "specifier": "./reconcile.mjs",
+      "kind": "import",
+      "line": 9,
+      "cite": "src/run.mjs:9",
+      "to": "src/reconcile.mjs",
+      "external": false,
+      "builtin": false
+    },
+    {
+      "from": "src/static-checks.mjs",
+      "specifier": "./claims.mjs",
+      "kind": "import",
+      "line": 9,
+      "cite": "src/static-checks.mjs:9",
+      "to": "src/claims.mjs",
+      "external": false,
+      "builtin": false
+    }
+  ],
+  "manifests": [
+    {
+      "path": "package.json",
+      "kind": "package.json",
+      "deps": [],
+      "devDeps": [],
+      "scripts": [
+        "privacy",
+        "test"
+      ],
+      "declaresNothing": true,
+      "cite": "package.json:1"
+    }
+  ],
+  "env": [
+    {
+      "name": "LANDED_N8N_API_KEY",
+      "how": "via an injected env object",
+      "line": 40,
+      "path": "src/host.mjs",
+      "secretish": true,
+      "cite": "src/host.mjs:40",
+      "alsoAt": []
+    },
+    {
+      "name": "LANDED_N8N_URL",
+      "how": "via an injected env object",
+      "line": 40,
+      "path": "src/host.mjs",
+      "secretish": false,
+      "cite": "src/host.mjs:40",
+      "alsoAt": []
+    }
+  ],
+  "routes": [],
+  "clients": [],
+  "hosts": [],
+  "schedules": [],
+  "observability": [
+    {
+      "kind": "records",
+      "name": "console.error",
+      "line": 142,
+      "path": "scripts/privacy-guard.mjs",
+      "cite": "scripts/privacy-guard.mjs:142"
+    }
+  ],
+  "authChecks": [],
+  "writes": [
+    {
+      "call": "writeFileSync",
+      "target": "path",
+      "path": "src/receipts.mjs",
+      "line": 58,
+      "cite": "src/receipts.mjs:58",
+      "alsoWrites": 1,
+      "alsoAt": [
+        "src/receipts.mjs:168"
+      ],
+      "targets": [
+        "path"
+      ]
+    }
+  ],
+  "shells": [
+    {
+      "call": "execFileSync",
+      "target": "git",
+      "path": "scripts/privacy-guard.mjs",
+      "line": 94,
+      "cite": "scripts/privacy-guard.mjs:94"
+    },
+    {
+      "call": "exec",
+      "target": "gh",
+      "path": "src/adapters/github.mjs",
+      "line": 69,
+      "cite": "src/adapters/github.mjs:69"
+    }
+  ],
+  "testFiles": [
+    "test/adapter-contract.test.mjs",
+    "test/adapter-github.test.mjs",
+    "test/adapter-n8n.test.mjs",
+    "test/append.test.mjs",
+    "test/claims.test.mjs",
+    "test/cli.test.mjs",
+    "test/enumeration.test.mjs",
+    "test/exit-codes.test.mjs",
+    "test/false-green.test.mjs",
+    "test/gate-time-corrections.test.mjs",
+    "test/github-classification.test.mjs",
+    "test/kind-dispatch.test.mjs",
+    "test/n8n-facts.test.mjs",
+    "test/new-adapter.test.mjs",
+    "test/no-model.test.mjs",
+    "test/privacy-guard.test.mjs",
+    "test/readme.test.mjs",
+    "test/receipts.test.mjs",
+    "test/reconcile.test.mjs",
+    "test/repo-hygiene.test.mjs",
+    "test/report.test.mjs",
+    "test/static-checks.test.mjs",
+    "test/syntax.test.mjs"
+  ],
+  "gaps": [],
+  "counts": {
+    "modules": 15,
+    "edges": 37,
+    "manifests": 1,
+    "env": 2,
+    "routes": 0,
+    "clients": 0,
+    "hosts": 0,
+    "schedules": 0,
+    "observability": 1,
+    "authChecks": 0,
+    "writes": 1,
+    "shells": 2,
+    "testFiles": 23,
+    "gaps": 0,
+    "blockingGaps": 0
+  },
+  "generated_at": "2026-09-28T01:12:39.185Z"
+}
