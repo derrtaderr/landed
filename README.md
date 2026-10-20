@@ -1,4 +1,23 @@
-# landed
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/landed-wordmark-dark.png">
+    <img src="assets/landed-wordmark-light.png" alt="landed" width="300">
+  </picture>
+  <br>
+  What an agent claimed, checked against what actually landed.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white" alt="Node 20 or newer">
+  <img src="https://img.shields.io/badge/dependencies-0-F97316" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/API%20key-none-8B949E" alt="No API key">
+</p>
+
+<p align="center">
+  <a href="#try-it">
+    <img src="assets/landed-demo.gif" alt="Running node bin/landed.mjs demo: 7 contradicted claims, 3 unresolved, 3 matched, then each contradiction with what the authoritative system actually recorded." width="760">
+  </a>
+</p>
 
 A scheduled reconciler that joins what an agent CLAIMED against what actually LANDED in the
 authoritative system, and resolves every claim to exactly one of three states.
